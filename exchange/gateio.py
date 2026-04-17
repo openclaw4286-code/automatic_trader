@@ -5,6 +5,12 @@ Responsibilities:
  * balance / positions / markets
  * place, cancel, and query orders
  * convert a CoinGecko base ticker (e.g. "BTC") into the unified ccxt symbol
+
+When DRY_RUN=true, write-ish calls (create_order, cancel_order) and
+the state they produce (positions, open_orders) are routed to an
+in-memory DryBroker so the full entry → SL/TP → partial-TP → trail →
+close lifecycle can be observed with zero real order flow. Read-only
+market data still comes from real Gate.io.
 """
 from __future__ import annotations
 
@@ -48,6 +54,10 @@ class GateioFutures:
         )
         self._markets: Dict[str, Any] = {}
         self._lock = asyncio.Lock()
+        self._paper = None           # lazily built when DRY_RUN
+        if DRY_RUN:
+            from exchange.paper import DryBroker
+            self._paper = DryBroker(self)
 
     # ------------------------------------------------------------------ setup
     async def load(self) -> None:
@@ -84,6 +94,10 @@ class GateioFutures:
     async def ticker(self, symbol: str) -> Dict[str, Any]:
         return await self._ex.fetch_ticker(symbol)
 
+    async def _fetch_ticker_real(self, symbol: str) -> Dict[str, Any]:
+        """Bypass the paper broker — used by DryBroker.tick to poll mark prices."""
+        return await self._ex.fetch_ticker(symbol)
+
     # -------------------------------------------------------------- account
     @retry(**_RETRY)
     async def equity_usdt(self) -> float:
@@ -91,8 +105,13 @@ class GateioFutures:
         total = bal.get("total", {}).get(SETTLE_CCY) or 0.0
         return float(total)
 
-    @retry(**_RETRY)
     async def positions(self) -> List[Dict[str, Any]]:
+        if self._paper is not None:
+            return await self._paper.positions()
+        return await self._positions_real()
+
+    @retry(**_RETRY)
+    async def _positions_real(self) -> List[Dict[str, Any]]:
         poss = await self._ex.fetch_positions()
         return [p for p in poss if float(p.get("contracts") or 0) > 0]
 
@@ -106,7 +125,6 @@ class GateioFutures:
         except Exception as exc:  # Gate returns an error if already set
             log.warning("set_leverage %s x%d: %s", symbol, leverage, exc)
 
-    @retry(**_RETRY)
     async def create_order(
         self,
         symbol: str,
@@ -115,27 +133,42 @@ class GateioFutures:
         price: Optional[float] = None,
         params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        if self._paper is not None:
+            return await self._paper.create_order(symbol, side, amount, price, params)
+        return await self._create_order_real(symbol, side, amount, price, params)
+
+    @retry(**_RETRY)
+    async def _create_order_real(
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        price: Optional[float],
+        params: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
         order_type = "limit" if price is not None else "market"
-        if DRY_RUN:
-            log.info(
-                "[dry] %s %s %s %.6f @ %s params=%s",
-                order_type,
-                side,
-                symbol,
-                amount,
-                price,
-                params,
-            )
-            return {"id": "dry", "symbol": symbol, "side": side, "amount": amount, "price": price}
         return await self._ex.create_order(symbol, order_type, side, amount, price, params or {})
 
-    @retry(**_RETRY)
     async def cancel_order(self, order_id: str, symbol: str) -> Dict[str, Any]:
-        if DRY_RUN:
-            log.info("[dry] cancel %s %s", order_id, symbol)
-            return {"id": order_id, "symbol": symbol, "status": "canceled"}
-        return await self._ex.cancel_order(order_id, symbol)
+        if self._paper is not None:
+            return await self._paper.cancel_order(order_id, symbol)
+        return await self._cancel_order_real(order_id, symbol)
 
     @retry(**_RETRY)
+    async def _cancel_order_real(self, order_id: str, symbol: str) -> Dict[str, Any]:
+        return await self._ex.cancel_order(order_id, symbol)
+
     async def open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        if self._paper is not None:
+            return await self._paper.open_orders(symbol)
+        return await self._open_orders_real(symbol)
+
+    @retry(**_RETRY)
+    async def _open_orders_real(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         return await self._ex.fetch_open_orders(symbol)
+
+    # ---------------------------------------------------------- paper tick
+    async def paper_tick(self) -> None:
+        """No-op in live mode; in DRY_RUN drives virtual SL/TP fills."""
+        if self._paper is not None:
+            await self._paper.tick()

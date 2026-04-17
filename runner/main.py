@@ -56,6 +56,7 @@ async def scan_loop(ex: GateioFutures, universe: Universe, scanner: Scanner, man
 async def monitor_loop(ex: GateioFutures, manager: TradeManager) -> None:
     while True:
         try:
+            await ex.paper_tick()                   # DRY_RUN: virtual SL/TP fills
             await manager.position_manager.tick()   # protection + partial TP + trail
             await manager.cleanup_stale()
             positions = await ex.positions()
