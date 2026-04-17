@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List, Tuple
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Explicit path so dotenv does not walk the call stack (which breaks
+# when config.py is imported from a `python - <<EOF` heredoc).
+load_dotenv(dotenv_path=Path(__file__).parent / ".env")
 
 
 KST = ZoneInfo("Asia/Seoul")

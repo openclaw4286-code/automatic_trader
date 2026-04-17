@@ -41,8 +41,9 @@ echo
 # --- show current state --------------------------------------------------
 python - <<'PY'
 import os
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(dotenv_path=Path.cwd() / ".env")
 dry = os.getenv("DRY_RUN", "true").lower()
 print(f"  current DRY_RUN  = {dry}")
 print(f"  GATE_API_KEY set = {'yes' if os.getenv('GATE_API_KEY') else 'NO — abort'}")
