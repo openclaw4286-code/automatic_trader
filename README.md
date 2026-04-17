@@ -25,61 +25,74 @@ tests/                   오프라인 단위테스트 (34개)
 logs/                    회전 로그 + last_llm_prompt.txt / last_llm_response.txt / last_llm_verdict.json
 ```
 
-## 빠른 시작 (로컬)
+## 빠른 시작 (로컬 — 복사-붙여넣기)
 
-### 1. 사전 요구사항
-- Python 3.10+
-- Node.js (Claude CLI 설치용)
-- Gate.io 선물 API 키 (권한: 읽기 + 선물 주문)
-- Claude Max 구독 (`claude -p --model opus` 호출용)
+### 0. 사전 요구사항
+- **Python 3.10+**
+- **Node.js 18+** (Claude CLI 설치용)
+- **Gate.io 선물 API 키** (권한: 읽기 + 선물 주문)
+- **Claude Max 구독** — `claude -p --model opus` 호출에 필요
 
-### 2. Claude CLI 설치
+### 1. Claude CLI 설치 & 로그인
 ```bash
 npm i -g @anthropic-ai/claude-code
-claude login     # 브라우저에서 Max 계정 로그인
+claude login              # 브라우저에서 Max 계정 로그인
 claude --version
 ```
 
-### 3. 프로젝트 설치
+### 2. 저장소 클론 & 브랜치 체크아웃
 ```bash
-git clone <이 저장소>
+git clone https://github.com/openclaw4286-code/automatic_trader.git
 cd automatic_trader
-./scripts/setup.sh           # venv + 의존성 + .env 복사
+git checkout claude/ict-trading-bot-fbgs8
 ```
 
-### 4. `.env` 설정
-```dotenv
-GATE_API_KEY=...
-GATE_API_SECRET=...
-DRY_RUN=true                 # 꼭 처음에는 true로 시작
-CRYPTOPANIC_TOKEN=           # 선택 — 없으면 RSS/캘린더로 자동 대체
-LOG_LEVEL=INFO
+### 3. 대화형 세팅 (venv + 의존성 + API 키 입력)
+```bash
+./scripts/setup.sh
 ```
+스크립트가 터미널에서 순서대로 물어봅니다:
+- `Gate.io API key` (입력 시 가려짐)
+- `Gate.io API secret` (가려짐)
+- `CryptoPanic token` *(선택)*
+- `NewsAPI key` *(선택)*
+- `claude CLI binary` *(기본 `claude`)*
+- `start in DRY_RUN mode` *(기본 Y — 처음엔 반드시 Y)*
+- `log level` *(기본 INFO)*
 
-### 5. 프리플라이트 점검
+입력한 값은 `.env` (퍼미션 600)로 저장됩니다. 다시 실행해도 기존 `.env`는 보존되며, 덮어쓸지 묻습니다.
+
+### 4. 프리플라이트 점검
 ```bash
 source .venv/bin/activate
 python scripts/doctor.py              # Gate / CoinGecko / Claude / 세션 확인
-python scripts/doctor.py --skip-claude # Claude 왕복 테스트 생략
+# Claude 왕복 테스트를 생략하려면
+python scripts/doctor.py --skip-claude
 ```
 모든 체크가 초록이어야 합니다.
 
-### 6. 테스트
+### 5. 오프라인 테스트 34개
 ```bash
-./scripts/test.sh    # 34개 단위테스트 (오프라인)
+./scripts/test.sh
 ```
 
-### 7. 드라이런 실행
+### 6. 드라이런 실행
 ```bash
 python -m runner.main
 ```
-`DRY_RUN=true`이면 실제 주문이 나가지 않고 로그에만 기록됩니다 (`logs/executor.log`, `logs/manager.log`, `logs/position.log` 등). 전체 플로우(스캔 → 게이트 → 사이징 → 주문 → 보호)를 볼 수 있습니다.
+`DRY_RUN=true`이면 실제 주문이 나가지 않고 로그에만 기록됩니다 (`logs/executor.log`, `logs/manager.log`, `logs/position.log`). 전체 플로우(스캔 → 게이트 → 사이징 → 주문 → 보호)를 눈으로 확인할 수 있습니다.
 
-### 8. 실전 전환
-1. `.env`에서 `DRY_RUN=false`
-2. Gate.io에서 선물 계정 마진 모드 (보통 **isolated**) 및 레버리지 상한 확인
-3. 작은 잔고 (예: 50 USDT)로 1~2일 관찰
-4. `logs/last_llm_verdict.json`의 PASS/WAIT 주기 확인, `logs/position.log`에서 SL/TP 부착 여부 확인
+### 7. 실전 전환
+```bash
+# .env를 편집하거나 setup을 다시 돌려 DRY_RUN=false로 변경
+sed -i 's/^DRY_RUN=.*/DRY_RUN=false/' .env
+python -m runner.main
+```
+실전 전 체크리스트:
+1. Gate.io 선물에서 마진 모드 (보통 **isolated**)·레버리지 상한 설정
+2. 작은 잔고(예: 50 USDT)로 하루 관찰
+3. `logs/last_llm_verdict.json`에서 PASS/WAIT 주기 확인
+4. `logs/position.log`에서 SL/TP 부착 여부 확인
 
 ## 주요 주기
 
