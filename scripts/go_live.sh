@@ -21,6 +21,19 @@ cd "$(dirname "$0")/.."
 # shellcheck disable=SC1091
 source .venv/bin/activate
 
+SKIP_OVERRIDES=0
+for arg in "$@"; do
+  case "$arg" in
+    --defaults|-d) SKIP_OVERRIDES=1 ;;
+    --help|-h)
+      echo "Usage: $0 [--defaults]"
+      echo "  --defaults   skip the conservative-override prompts and use"
+      echo "               config.py values (RISK 1.5%, LEV x50, 10 positions)."
+      exit 0
+      ;;
+  esac
+done
+
 echo
 echo "━━━━━━━━━━━━━━━━ live-trading safe-start ━━━━━━━━━━━━━━━━"
 echo
@@ -53,28 +66,33 @@ async def _probe():
 asyncio.run(_probe())
 PY
 
-# --- conservative overrides ----------------------------------------------
-echo
-echo "  ▶ conservative overrides (env vars, in-process only):"
-read -r -p "    RISK_PER_TRADE  (% of equity, default 1.5, recommended first-live 0.5): " risk
-read -r -p "    MAX_CONCURRENT_POSITIONS (default 10, recommended first-live 1):        " cap
-read -r -p "    LEVERAGE_MAX   (default 50,   recommended first-live 10):               " lev
+# --- conservative overrides (skipped with --defaults) --------------------
+if [ "$SKIP_OVERRIDES" = "1" ]; then
+  echo
+  echo "  ▶ --defaults: using config.py values (RISK 1.5%, LEV x50, 10 positions)"
+else
+  echo
+  echo "  ▶ conservative overrides (env vars, in-process only):"
+  read -r -p "    RISK_PER_TRADE  (% of equity, default 1.5, recommended first-live 0.5): " risk
+  read -r -p "    MAX_CONCURRENT_POSITIONS (default 10, recommended first-live 1):        " cap
+  read -r -p "    LEVERAGE_MAX   (default 50,   recommended first-live 10):               " lev
 
-export_override() {       # VAR name, user input, default
-  local var="$1" val="$2" def="$3"
-  if [ -n "$val" ]; then
-    export "$var=$val"
-    echo "    export $var=$val"
-  else
-    export "$var=$def"
-    echo "    export $var=$def (default)"
-  fi
-}
+  export_override() {       # VAR name, user input, default
+    local var="$1" val="$2" def="$3"
+    if [ -n "$val" ]; then
+      export "$var=$val"
+      echo "    export $var=$val"
+    else
+      export "$var=$def"
+      echo "    export $var=$def (default)"
+    fi
+  }
 
-echo "  ▶ applying:"
-export_override RISK_OVERRIDE "$risk" ""
-export_override CAP_OVERRIDE "$cap" ""
-export_override LEV_OVERRIDE "$lev" ""
+  echo "  ▶ applying:"
+  export_override RISK_OVERRIDE "${risk:-}" ""
+  export_override CAP_OVERRIDE "${cap:-}" ""
+  export_override LEV_OVERRIDE "${lev:-}" ""
+fi
 
 # turn the numeric overrides into python -c config edits at start-up
 # via a tiny monkeypatch file sourced by main.py through env

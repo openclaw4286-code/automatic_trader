@@ -89,7 +89,8 @@ python -m runner.main
 (`LIVE_CONFIRMED` env 필요).
 
 ```bash
-./scripts/go_live.sh
+./scripts/go_live.sh                 # 대화형 (보수 오버라이드 입력)
+./scripts/go_live.sh --defaults      # config.py 원값 (1.5% / x50 / 10 pos) 그대로
 ```
 
 스크립트가 하는 일:
