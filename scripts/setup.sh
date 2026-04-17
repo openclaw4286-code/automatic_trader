@@ -9,10 +9,53 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# --------------------------------------------------------- python version
+# ccxt 4.5+ uses syntax that requires Python 3.10. Pick the newest
+# interpreter on PATH that satisfies that.
+find_python() {
+  local candidates=(python3.13 python3.12 python3.11 python3.10 python3)
+  for cmd in "${candidates[@]}"; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+      local ver
+      ver=$("$cmd" -c 'import sys; print("%d.%d"%sys.version_info[:2])' 2>/dev/null || echo "0.0")
+      local major minor
+      IFS=. read -r major minor <<< "$ver"
+      if [ "${major:-0}" -ge 3 ] && [ "${minor:-0}" -ge 10 ]; then
+        echo "$cmd"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+if ! PY=$(find_python); then
+  cat <<'MSG' >&2
+!! no Python >= 3.10 found on PATH.
+   ccxt 4.5+ cannot run on Python 3.9 or older.
+
+   macOS:     brew install python@3.11
+   Ubuntu:    sudo apt install python3.11 python3.11-venv
+   then re-run ./scripts/setup.sh
+MSG
+  exit 1
+fi
+echo "▶ using $PY ($("$PY" -V))"
+
 # ------------------------------------------------------------- venv + pip
 if [ ! -d .venv ]; then
-  echo "▶ creating .venv"
-  python3 -m venv .venv
+  echo "▶ creating .venv with $PY"
+  "$PY" -m venv .venv
+else
+  # re-verify the existing venv is on a supported python
+  existing_ver=$(.venv/bin/python -c 'import sys; print("%d.%d"%sys.version_info[:2])' 2>/dev/null || echo "0.0")
+  existing_major=${existing_ver%%.*}
+  existing_minor=${existing_ver##*.}
+  if [ "${existing_major:-0}" -lt 3 ] || [ "${existing_minor:-0}" -lt 10 ]; then
+    echo "▶ existing .venv uses Python $existing_ver — recreating with $PY"
+    rm -rf .venv
+    "$PY" -m venv .venv
+  fi
 fi
 
 # shellcheck disable=SC1091
