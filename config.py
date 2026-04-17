@@ -69,6 +69,11 @@ SESSIONS_KST: List[Tuple[str, str]] = [
     ("02:00", "05:00"),
 ]
 
+# Weekdays (Python Monday=0 ... Sunday=6) on which the scanner may run.
+# Crypto itself is 24/7 but Asia / London / NY session liquidity patterns
+# only exist Mon-Fri; weekend books are thin and often manipulative.
+TRADE_WEEKDAYS_KST: set[int] = {0, 1, 2, 3, 4}
+
 
 # ---------------------------------------------------------------------------
 # ICT analysis parameters
