@@ -69,13 +69,23 @@ class ScriptedTicker:
 
 
 def scenario_prices(scenario: str, entry: float, sl: float, tp: float, direction: str) -> list[float]:
-    """Return a sequence of mark prices sampled every paper tick."""
-    tp1 = entry + (entry - sl) if direction == "long" else entry - (sl - entry)
+    """Return a sequence of mark prices sampled every paper tick.
+
+    Use generous distances past rounded triggers so the paper broker's
+    tick-size-rounded SL/TP orders actually fire.
+    """
+    r = abs(entry - sl)
+    tp1 = entry + r if direction == "long" else entry - r
     if scenario == "tp":
-        path = [entry, tp1 + 1e-9, tp1 + 1e-9, tp + 1e-9, tp + 1e-9]
+        if direction == "long":
+            path = [entry, tp1 + r * 0.1, tp1 + r * 0.1, tp + r * 0.1, tp + r * 0.1]
+        else:
+            path = [entry, tp1 - r * 0.1, tp1 - r * 0.1, tp - r * 0.1, tp - r * 0.1]
     elif scenario == "sl":
         mid = (entry + sl) / 2
-        path = [entry, mid, sl - 1e-9 if direction == "long" else sl + 1e-9]
+        # push well past the rounded stop so tick-rounding cannot hide the trigger
+        past_sl = sl - r * 0.2 if direction == "long" else sl + r * 0.2
+        path = [entry, mid, past_sl, past_sl]
     elif scenario == "trail":
         if direction == "long":
             path = [entry, tp1, tp1 + (tp - tp1) * 0.4, tp1 + (tp - tp1) * 0.2]

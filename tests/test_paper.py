@@ -7,8 +7,12 @@ from exchange.paper import DryBroker
 
 
 class _FakeEx:
-    def __init__(self) -> None:
+    def __init__(self, contract_size: float = 1.0) -> None:
         self._price = 100.0
+        self._markets = {
+            "BTC/USDT:USDT": {"contractSize": contract_size},
+            "ETH/USDT:USDT": {"contractSize": contract_size},
+        }
 
     def set_price(self, p: float) -> None:
         self._price = p
@@ -141,6 +145,23 @@ def test_short_position_sl_and_tp():
     asyncio.run(_run())
 
 
+def test_pnl_uses_contract_size_for_base_assets():
+    """Gate BTC perp: contractSize=0.0001, so 100 contracts = 0.01 BTC."""
+    async def _run():
+        fx = _FakeEx(contract_size=0.0001)
+        b = DryBroker(fx)                                          # type: ignore[arg-type]
+        await b.create_order("BTC/USDT:USDT", "buy", 100, 75000.0, None)
+        await b.create_order("BTC/USDT:USDT", "sell", 100, 75100.0, {"reduceOnly": True})
+
+        fx.set_price(75100.0)
+        await b.tick()
+        assert await b.positions() == []
+        # expected pnl: (75100 - 75000) * (100 * 0.0001) = 100 * 0.01 = 1.0 USDT
+        assert abs(b.realized_pnl - 1.0) < 1e-9
+
+    asyncio.run(_run())
+
+
 if __name__ == "__main__":
     test_entry_fills_immediately_and_creates_position()
     test_sl_order_tracked_then_triggered_when_price_drops()
@@ -149,4 +170,5 @@ if __name__ == "__main__":
     test_cancel_order_removes_it_from_book()
     test_emergency_market_reduce_only_closes_position()
     test_short_position_sl_and_tp()
+    test_pnl_uses_contract_size_for_base_assets()
     print("all paper tests passed")

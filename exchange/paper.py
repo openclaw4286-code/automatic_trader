@@ -199,15 +199,25 @@ class DryBroker:
         self._fill_at(fake, pos, fill_px, kind="MKT")
         return {"id": oid, "symbol": symbol, "status": "closed", "price": fill_px, "amount": amount}
 
+    def _contract_size(self, symbol: str) -> float:
+        m = (self._ex._markets or {}).get(symbol) or {}
+        cs = m.get("contractSize")
+        try:
+            return float(cs) if cs else 1.0
+        except (TypeError, ValueError):
+            return 1.0
+
     def _fill_at(self, order: _Order, pos: _Position, price: float, *, kind: str) -> None:
         close_qty = min(order.amount, pos.contracts)
+        cs = self._contract_size(pos.symbol)
+        base_qty = close_qty * cs
         pnl_per_unit = (price - pos.entry_price) if pos.side == "long" else (pos.entry_price - price)
-        pnl = pnl_per_unit * close_qty
+        pnl = pnl_per_unit * base_qty
         self.realized_pnl += pnl
         pos.contracts -= close_qty
         log.info(
-            "[paper FILL %s] %s qty=%.6g @ %.6g  pnl=%+.4f  remaining=%.6g",
-            kind, pos.symbol, close_qty, price, pnl, pos.contracts,
+            "[paper FILL %s] %s qty=%.6g (base=%.6g) @ %.6g  pnl=%+.4f  remaining=%.6g",
+            kind, pos.symbol, close_qty, base_qty, price, pnl, pos.contracts,
         )
         # remove / shrink the order
         if order.amount <= close_qty:
