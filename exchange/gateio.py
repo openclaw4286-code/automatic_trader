@@ -156,7 +156,13 @@ class GateioFutures:
 
     @retry(**_RETRY)
     async def _cancel_order_real(self, order_id: str, symbol: str) -> Dict[str, Any]:
-        return await self._ex.cancel_order(order_id, symbol)
+        # Gate splits regular vs conditional (stop/trigger) orders across
+        # two endpoints. We do not know which kind an id belongs to here,
+        # so try regular first and fall back to the trigger endpoint.
+        try:
+            return await self._ex.cancel_order(order_id, symbol)
+        except Exception:
+            return await self._ex.cancel_order(order_id, symbol, {"stop": True})
 
     async def open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         if self._paper is not None:
@@ -165,7 +171,18 @@ class GateioFutures:
 
     @retry(**_RETRY)
     async def _open_orders_real(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        return await self._ex.fetch_open_orders(symbol)
+        # Regular (limit / reduce-only limit TP) orders.
+        regular = await self._ex.fetch_open_orders(symbol)
+        # Conditional (stop-market SL, trailing) orders — Gate exposes
+        # these only when {'stop': True} is passed.
+        try:
+            trigger = await self._ex.fetch_open_orders(symbol, params={"stop": True})
+            for o in trigger:
+                o["_is_trigger"] = True
+        except Exception as exc:
+            log.warning("fetch trigger orders failed: %s", exc)
+            trigger = []
+        return list(regular) + list(trigger)
 
     # ---------------------------------------------------------- paper tick
     async def paper_tick(self) -> None:
