@@ -85,6 +85,28 @@ def _next_liquidity_target(a: TFAnalysis, direction: str, price: float) -> Optio
     return max(lows) if lows else None
 
 
+def _structural_sl(
+    mtf_zone: Optional[Zone],
+    mtf: TFAnalysis,
+    direction: str,
+    price: float,
+) -> Optional[float]:
+    """Where a trade is 'structurally wrong'.
+
+    Prefer the outer edge of the MTF zone we are trading from — that zone
+    only remains valid while price respects it. If somehow no MTF zone
+    contains price, fall back to the nearest MTF swing on the opposite
+    side of price (a closer-in structure break).
+    """
+    if mtf_zone is not None:
+        return mtf_zone.bottom if direction == "long" else mtf_zone.top
+    if direction == "long":
+        lows = [s.price for s in mtf.swings if not s.is_high and s.price < price]
+        return max(lows) if lows else None
+    highs = [s.price for s in mtf.swings if s.is_high and s.price > price]
+    return min(highs) if highs else None
+
+
 def top_down(
     symbol: str,
     htf_df: pd.DataFrame,
@@ -137,20 +159,27 @@ def top_down(
         return None
 
     # -------- Entry / SL / TP ---------------------------------------------
-    # SL reference: if an LTF sweep aligned, anchor beyond its swept level;
-    # otherwise use the LTF zone edge only.
+    # Entry precision = LTF zone edge.
+    # SL anchor = MTF structural invalidation (outer edge of the MTF zone
+    # we are trading, or nearest MTF swing). LTF sweep level is only used
+    # as an additional safety anchor if it sits FURTHER from entry than
+    # the structural level — we never tighten the SL onto LTF noise.
     ltf_sweep_level = ltf.sweep.swept_level if ltf_sweep_aligned else None
+    structural = _structural_sl(mtf_zone, mtf, direction, price)
+    if structural is None:
+        return None
+
     if direction == "long":
         entry = ltf_zone.top
-        anchors = [ltf_zone.bottom]
-        if ltf_sweep_level is not None:
+        anchors = [structural]
+        if ltf_sweep_level is not None and ltf_sweep_level < structural:
             anchors.append(ltf_sweep_level)
         sl = min(anchors) * 0.999
         tp = _next_liquidity_target(htf, "long", entry) or (entry + (entry - sl) * MIN_RR)
     else:
         entry = ltf_zone.bottom
-        anchors = [ltf_zone.top]
-        if ltf_sweep_level is not None:
+        anchors = [structural]
+        if ltf_sweep_level is not None and ltf_sweep_level > structural:
             anchors.append(ltf_sweep_level)
         sl = max(anchors) * 1.001
         tp = _next_liquidity_target(htf, "short", entry) or (entry - (sl - entry) * MIN_RR)
@@ -165,7 +194,7 @@ def top_down(
     )
     reason = (
         f"HTF {htf.bias.value} {htf_sweep_txt} inside {htf_zone.kind} | "
-        f"MTF {mtf_event} inside {mtf_zone.kind} | "
+        f"MTF {mtf_event} inside {mtf_zone.kind} (SL anchor) | "
         f"LTF {ltf_trigger_txt} → {ltf_zone.kind}"
     )
 
