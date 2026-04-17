@@ -55,6 +55,27 @@ def _contract_size(market: Dict[str, Any]) -> float:
     return float(cs) if cs else 1.0
 
 
+def _symbol_leverage_cap(market: Dict[str, Any]) -> int:
+    """Gate.io publishes a per-symbol leverage cap. Respect it."""
+    limits = (market.get("limits") or {}).get("leverage") or {}
+    for key in ("max",):
+        v = limits.get(key)
+        if v:
+            try:
+                return int(float(v))
+            except (TypeError, ValueError):
+                pass
+    info = market.get("info") or {}
+    for key in ("leverage_max", "leverageMax"):
+        v = info.get(key)
+        if v:
+            try:
+                return int(float(v))
+            except (TypeError, ValueError):
+                pass
+    return LEVERAGE_MAX
+
+
 def _amount_precision(market: Dict[str, Any], qty: float) -> float:
     """Round qty down to the exchange's amount step."""
     step = None
@@ -100,9 +121,12 @@ def plan_position(
     notional = risk_budget / sl_pct
 
     # 2) max leverage whose liquidation is beyond SL; safety haircut of 0.9
-    #    liquidation ≈ 1/L from entry on isolated linear perps
+    #    liquidation ≈ 1/L from entry on isolated linear perps.
+    #    Respect both the global cap and the per-symbol exchange cap
+    #    (Gate.io caps many alts below LEVERAGE_MAX).
     lev_from_sl = int(math.floor(0.9 / sl_pct)) if sl_pct > 0 else LEVERAGE_MAX
-    leverage = max(1, min(LEVERAGE_MAX, lev_from_sl))
+    symbol_cap = _symbol_leverage_cap(market)
+    leverage = max(1, min(LEVERAGE_MAX, symbol_cap, lev_from_sl))
 
     margin = notional / leverage
     capped = False

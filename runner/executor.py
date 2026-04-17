@@ -81,6 +81,9 @@ class Executor:
         return EntryReceipt(order_id=str(order.get("id")), symbol=plan.symbol, plan=plan)
 
     async def attach_stop_loss(self, symbol: str, direction: str, qty_contracts: float, sl: float) -> str:
+        """Reduce-only stop-market. ccxt gate expects only stopPrice +
+        reduceOnly; passing 'trigger' / 'type' strings confuses Gate's
+        unmarshaller (error: 'cannot unmarshal string into ... PriceTrigger')."""
         side = self._close_side(direction)
         price = self._round_price(symbol, sl)
         qty = self._round_qty(symbol, qty_contracts)
@@ -92,9 +95,6 @@ class Executor:
             params={
                 "reduceOnly": True,
                 "stopPrice": price,
-                "triggerPrice": price,
-                "trigger": "last",
-                "type": "market",
             },
         )
         oid = str(order.get("id"))
