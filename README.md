@@ -83,16 +83,38 @@ python -m runner.main
 `DRY_RUN=true`이면 실제 주문이 나가지 않고 로그에만 기록됩니다 (`logs/executor.log`, `logs/manager.log`, `logs/position.log`). 전체 플로우(스캔 → 게이트 → 사이징 → 주문 → 보호)를 눈으로 확인할 수 있습니다.
 
 ### 7. 실전 전환
+
+실전은 반드시 `./scripts/go_live.sh`로만 시작. `DRY_RUN=false`만 켜고
+`python -m runner.main`을 쳐도 런타임 가드가 막습니다
+(`LIVE_CONFIRMED` env 필요).
+
 ```bash
-# .env를 편집하거나 setup을 다시 돌려 DRY_RUN=false로 변경
-sed -i 's/^DRY_RUN=.*/DRY_RUN=false/' .env
-python -m runner.main
+./scripts/go_live.sh
 ```
-실전 전 체크리스트:
-1. Gate.io 선물에서 마진 모드 (보통 **isolated**)·레버리지 상한 설정
-2. 작은 잔고(예: 50 USDT)로 하루 관찰
-3. `logs/last_llm_verdict.json`에서 PASS/WAIT 주기 확인
-4. `logs/position.log`에서 SL/TP 부착 여부 확인
+
+스크립트가 하는 일:
+1. 현재 Gate.io 잔고·API 키·DRY_RUN 상태 표시
+2. 보수적 오버라이드 입력받음 (첫 실거래 권장):
+   - `RISK_PER_TRADE` = 0.5%
+   - `MAX_CONCURRENT_POSITIONS` = 1
+   - `LEVERAGE_MAX` = 10
+3. `I UNDERSTAND` 입력해야 진행
+4. `DRY_RUN=false LIVE_CONFIRMED=true`로 봇 기동
+5. 핵심 4개 로그(`executor`, `position`, `manager`, `llm_gate`) 실시간 tail
+
+Ctrl+C = graceful shutdown. SL/TP 부착이 거부되면 PositionManager가
+자동 시장가 청산하므로 보호 없는 포지션은 남지 않습니다.
+
+**Gate.io 계정 체크리스트:**
+1. 선물 **isolated 마진** 모드 확인
+2. 잔고 소액(20~50 USDT)부터
+3. 첫 시그널 체결 시 Gate 웹 UI "Active Orders"에 SL + TP 두 개 모두 보이는지 확인
+4. `logs/last_llm_verdict.json`에서 PASS/WAIT 주기 확인
+5. 문제 없으면 `.env`에 영구 반영:
+   ```bash
+   sed -i '' 's/^DRY_RUN=.*/DRY_RUN=false/' .env
+   LIVE_CONFIRMED=true python -m runner.main
+   ```
 
 ## 주요 주기
 

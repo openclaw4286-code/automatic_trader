@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import signal as os_signal
 
 from config import (
@@ -73,6 +74,17 @@ async def monitor_loop(ex: GateioFutures, manager: TradeManager) -> None:
 
 
 async def amain() -> None:
+    if not DRY_RUN and os.getenv("LIVE_CONFIRMED", "").lower() not in ("1", "true", "yes"):
+        msg = (
+            "DRY_RUN=false detected but LIVE_CONFIRMED env var is not set.\n"
+            "This is a safety guard: real orders will be sent to Gate.io.\n"
+            "To proceed: LIVE_CONFIRMED=true python -m runner.main\n"
+            "Or better, use ./scripts/go_live.sh which walks through the "
+            "safe-start protocol."
+        )
+        print(msg)
+        log.error("live-mode startup blocked — see stdout")
+        return
     log.info("starting ICT auto-trader (DRY_RUN=%s)", DRY_RUN)
     ex = GateioFutures()
     await ex.load()
