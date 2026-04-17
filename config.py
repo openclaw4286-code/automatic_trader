@@ -130,6 +130,11 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_ROTATE_MB = 20
 LOG_BACKUPS = 10
 
+# Single rolling files — overwritten every LLM cycle, no history kept.
+LLM_PROMPT_FILE = os.path.join(LOG_DIR, "last_llm_prompt.txt")
+LLM_RESPONSE_FILE = os.path.join(LOG_DIR, "last_llm_response.txt")
+LLM_VERDICT_FILE = os.path.join(LOG_DIR, "last_llm_verdict.json")
+
 
 # ---------------------------------------------------------------------------
 # Helpers
