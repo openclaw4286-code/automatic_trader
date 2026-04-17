@@ -14,7 +14,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Dict
 
-from config import LEVERAGE_MAX, MAX_MARGIN, RISK_PER_TRADE
+from config import LEVERAGE_MAX, MAX_MARGIN, MIN_SL_PCT, RISK_PER_TRADE
 from ict.models import Signal
 from utils.logger import get_logger
 
@@ -115,6 +115,12 @@ def plan_position(
         return None
 
     sl_pct = sl_dist / entry
+    if sl_pct < MIN_SL_PCT:
+        log.info(
+            "%s rejected: SL %.3f%% < MIN_SL_PCT %.3f%% (fees would dominate)",
+            signal.symbol, sl_pct * 100, MIN_SL_PCT * 100,
+        )
+        return None
     risk_budget = equity_usdt * RISK_PER_TRADE
 
     # 1) notional from risk budget (linear USDT-settled: PnL = notional * dPct)

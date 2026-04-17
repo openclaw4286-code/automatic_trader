@@ -26,11 +26,14 @@ MARKET = {"contractSize": 0.0001, "precision": {"amount": 0.0001}, "limits": {"a
 
 
 def test_loss_at_sl_matches_risk_budget():
+    from config import RISK_PER_TRADE
+
     equity = 10_000.0
     sig = _signal(entry=100.0, sl=99.0, tp=102.0)          # 1% SL
     plan = plan_position(sig, equity, MARKET)
     assert plan is not None
-    assert abs(plan.expected_loss_usdt - equity * 0.015) / (equity * 0.015) < 0.05
+    target = equity * RISK_PER_TRADE
+    assert abs(plan.expected_loss_usdt - target) / target < 0.05
 
 
 def test_leverage_fits_inside_sl():
@@ -43,8 +46,10 @@ def test_leverage_fits_inside_sl():
 
 
 def test_margin_cap_applies():
+    # 0.45% SL: above MIN_SL_PCT (0.4%), but notional is big enough that
+    # the 10% margin cap kicks in (risk 2.5% / 0.45% = 5.56x equity).
     equity = 10_000.0
-    sig = _signal(entry=100.0, sl=99.95, tp=100.2)         # 0.05% SL -> huge notional
+    sig = _signal(entry=100.0, sl=99.55, tp=102.0)
     plan = plan_position(sig, equity, MARKET)
     assert plan is not None
     assert plan.capped_by_margin
@@ -65,10 +70,18 @@ def test_tiny_qty_rejected():
     assert plan is None or plan.qty_contracts > 0
 
 
+def test_min_sl_pct_rejects_ultra_tight_stops():
+    # SL 0.1% of entry -> below MIN_SL_PCT (0.4%) -> should be rejected
+    sig = _signal(entry=100.0, sl=99.9, tp=100.5)
+    plan = plan_position(sig, 10_000.0, MARKET)
+    assert plan is None
+
+
 if __name__ == "__main__":
     test_loss_at_sl_matches_risk_budget()
     test_leverage_fits_inside_sl()
     test_margin_cap_applies()
     test_short_direction()
     test_tiny_qty_rejected()
+    test_min_sl_pct_rejects_ultra_tight_stops()
     print("all sizing tests passed")

@@ -93,11 +93,14 @@ HTF_SWEEP_REQUIRED = False
 # ---------------------------------------------------------------------------
 # Risk management (ICT fixed-fractional)
 # ---------------------------------------------------------------------------
-RISK_PER_TRADE = 0.015           # 1.5% of equity per trade
+RISK_PER_TRADE = 0.025           # 2.5% of equity per trade
 LEVERAGE_MAX = 50
 MAX_MARGIN = 0.10                # 10% of equity — final margin cap
 MAX_CONCURRENT_POSITIONS = 10
 MIN_RR = 1.5                     # minimum reward-to-risk (TP vs SL)
+MIN_SL_PCT = 0.004               # reject setups whose SL is tighter than this
+                                 # (0.4%) — fees dominate the risk budget on
+                                 # ultra-tight stops
 
 
 # ---------------------------------------------------------------------------
