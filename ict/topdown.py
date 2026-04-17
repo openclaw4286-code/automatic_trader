@@ -18,7 +18,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-from config import MIN_RR
+from config import HTF_SWEEP_REQUIRED, MIN_RR, MTF_EVENT_LOOKBACK_BARS
 from ict.models import Bias, Signal, TFAnalysis, Zone
 from ict.patterns import detect_fvgs, detect_order_blocks, detect_sweep
 from ict.structure import detect_structure, detect_swings
@@ -66,6 +66,16 @@ def _last_event(a: TFAnalysis, direction: str) -> Optional[str]:
     return None
 
 
+def _recent_event(a: TFAnalysis, direction: str, within_bars: int, total_bars: int) -> Optional[str]:
+    """Return the kind of the most recent BOS/CHOCH in ``direction`` that
+    happened within the last ``within_bars`` candles, else None."""
+    cutoff = max(0, total_bars - within_bars)
+    for e in reversed(a.events):
+        if e.direction == direction and e.idx >= cutoff:
+            return e.kind
+    return None
+
+
 def _next_liquidity_target(a: TFAnalysis, direction: str, price: float) -> Optional[float]:
     """Nearest prior opposite-side swing serves as a liquidity target (TP)."""
     if direction == "long":
@@ -87,7 +97,8 @@ def top_down(
         return None
 
     direction = "long" if htf.bias is Bias.BULL else "short"
-    if htf.sweep is None or htf.sweep.direction != direction:
+    htf_sweep_aligned = htf.sweep is not None and htf.sweep.direction == direction
+    if HTF_SWEEP_REQUIRED and not htf_sweep_aligned:
         return None
 
     htf_zones = _zones_in_direction(htf, direction)
@@ -103,7 +114,8 @@ def top_down(
     mtf = analyze(mtf_df, "MTF")
     if mtf.bias is not htf.bias:
         return None
-    if _last_event(mtf, direction) not in ("BOS", "CHOCH"):
+    mtf_event = _recent_event(mtf, direction, MTF_EVENT_LOOKBACK_BARS, len(mtf_df))
+    if mtf_event is None:
         return None
 
     mtf_zones_dir = _zones_in_direction(mtf, direction)
@@ -114,9 +126,10 @@ def top_down(
 
     # -------- LTF -----------------------------------------------------------
     ltf = analyze(ltf_df, "LTF")
-    if ltf.sweep is None or ltf.sweep.direction != direction:
-        return None
-    if _last_event(ltf, direction) != "CHOCH":
+    ltf_sweep_aligned = ltf.sweep is not None and ltf.sweep.direction == direction
+    ltf_event = _last_event(ltf, direction)
+    has_trigger = ltf_event in ("BOS", "CHOCH")
+    if not (ltf_sweep_aligned or has_trigger):
         return None
 
     ltf_zone = _zone_containing(_zones_in_direction(ltf, direction), price)
@@ -124,19 +137,36 @@ def top_down(
         return None
 
     # -------- Entry / SL / TP ---------------------------------------------
+    # SL reference: if an LTF sweep aligned, anchor beyond its swept level;
+    # otherwise use the LTF zone edge only.
+    ltf_sweep_level = ltf.sweep.swept_level if ltf_sweep_aligned else None
     if direction == "long":
         entry = ltf_zone.top
-        sl = min(ltf_zone.bottom, ltf.sweep.swept_level) * 0.999
+        anchors = [ltf_zone.bottom]
+        if ltf_sweep_level is not None:
+            anchors.append(ltf_sweep_level)
+        sl = min(anchors) * 0.999
         tp = _next_liquidity_target(htf, "long", entry) or (entry + (entry - sl) * MIN_RR)
     else:
         entry = ltf_zone.bottom
-        sl = max(ltf_zone.top, ltf.sweep.swept_level) * 1.001
+        anchors = [ltf_zone.top]
+        if ltf_sweep_level is not None:
+            anchors.append(ltf_sweep_level)
+        sl = max(anchors) * 1.001
         tp = _next_liquidity_target(htf, "short", entry) or (entry - (sl - entry) * MIN_RR)
 
+    htf_sweep_txt = (
+        f"sweep@{htf.sweep.swept_level:.4f}" if htf_sweep_aligned else "no-sweep"
+    )
+    ltf_trigger_txt = (
+        f"sweep@{ltf.sweep.swept_level:.4f}+{ltf_event or '-'}"
+        if ltf_sweep_aligned
+        else (ltf_event or "-")
+    )
     reason = (
-        f"HTF {htf.bias.value} sweep@{htf.sweep.swept_level:.4f} inside {htf_zone.kind} | "
-        f"MTF {_last_event(mtf, direction)} inside {mtf_zone.kind} | "
-        f"LTF sweep@{ltf.sweep.swept_level:.4f} + CHoCH → {ltf_zone.kind}"
+        f"HTF {htf.bias.value} {htf_sweep_txt} inside {htf_zone.kind} | "
+        f"MTF {mtf_event} inside {mtf_zone.kind} | "
+        f"LTF {ltf_trigger_txt} → {ltf_zone.kind}"
     )
 
     sig = Signal(

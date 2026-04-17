@@ -71,12 +71,20 @@ SESSIONS_KST: List[Tuple[str, str]] = [
 # ICT analysis parameters
 # ---------------------------------------------------------------------------
 SWING_LOOKBACK = 3               # bars on each side for swing pivot
-FVG_MIN_ATR_MULT = 0.1           # FVG must be >= this * ATR to count
+FVG_MIN_ATR_MULT = 0.05          # FVG must be >= this * ATR to count
 OB_LOOKBACK = 50                 # how far back to search for order blocks
 STRUCTURE_LOOKBACK = 80          # bars used for BOS / CHoCH detection
-LIQUIDITY_TOLERANCE_PCT = 0.0005 # 0.05% — equal-highs/lows tolerance
+LIQUIDITY_TOLERANCE_PCT = 0.001  # equal-highs/lows tolerance for sweep
 SWEEP_LOOKBACK = 50              # bars back when searching sweep target
 ATR_PERIOD = 14
+
+# How far back we accept the most recent MTF structure event (BOS/CHoCH)
+# when validating alignment with HTF bias. Larger = more frequent signals.
+MTF_EVENT_LOOKBACK_BARS = 30
+
+# HTF sweep is treated as a *bonus* rather than a hard requirement. Set
+# HTF_SWEEP_REQUIRED=True to restore the old strict behaviour.
+HTF_SWEEP_REQUIRED = False
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +94,7 @@ RISK_PER_TRADE = 0.015           # 1.5% of equity per trade
 LEVERAGE_MAX = 50
 MAX_MARGIN = 0.10                # 10% of equity — final margin cap
 MAX_CONCURRENT_POSITIONS = 10
-MIN_RR = 2.0                     # minimum reward-to-risk (TP vs SL)
+MIN_RR = 1.5                     # minimum reward-to-risk (TP vs SL)
 
 
 # ---------------------------------------------------------------------------
