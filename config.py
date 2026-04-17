@@ -90,6 +90,21 @@ MIN_RR = 2.0                     # minimum reward-to-risk (TP vs SL)
 
 
 # ---------------------------------------------------------------------------
+# Exit management (partial TP, move-to-BE, trailing stop)
+# ---------------------------------------------------------------------------
+TP1_RR = 1.0                     # partial-TP level in R multiples
+TP1_PORTION = 0.5                # fraction closed at TP1
+BREAKEVEN_AFTER_TP1 = True       # move SL to entry once TP1 fills
+TRAIL_ENABLED = True
+TRAIL_ACTIVATION_RR = 1.5        # trail activates after price is this far in R
+TRAIL_DISTANCE_R = 0.8           # trailing SL sits this many R behind the high
+
+# Protection guard — if SL or TP cannot be attached to a live position
+# after this many tick retries, we emergency-close at market.
+PROTECTION_MAX_RETRY = 2
+
+
+# ---------------------------------------------------------------------------
 # Execution cadence
 # ---------------------------------------------------------------------------
 SCAN_INTERVAL_SEC = 60                  # ICT scan cadence

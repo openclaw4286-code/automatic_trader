@@ -1,11 +1,12 @@
-"""Trade manager — chains scanner output through every gate and into orders.
+"""Trade manager — chains scanner output through every gate into entries.
 
 Pipeline per cycle (only when we are in-session):
- signals  → LLM gate PASS  → portfolio caps  → per-symbol sizing
-          → executor.place(plan).
+ signals  → LLM gate PASS  → portfolio caps (incl. tracked)
+          → per-symbol sizing  → executor.place_entry(plan)
+          → position_manager.register(receipt, plan)
 
-Each step can drop candidates; the manager records pending entries so
-they do not double-fire across cycles.
+Protection (SL + TP), partial TP, trailing, and emergency close are
+owned by PositionManager and run on the monitor loop tick.
 """
 from __future__ import annotations
 
@@ -17,7 +18,8 @@ from ict.models import Signal
 from llm.gate import LLMGate
 from risk.portfolio import already_in_symbol, can_open_new
 from risk.sizing import plan_position
-from runner.executor import Executor, PlacedOrders
+from runner.executor import EntryReceipt, Executor
+from runner.position_manager import PositionManager
 from utils.logger import get_logger
 from utils.session import in_session
 
@@ -25,14 +27,24 @@ log = get_logger("manager")
 
 
 class TradeManager:
-    def __init__(self, ex: GateioFutures, gate: LLMGate, executor: Executor | None = None) -> None:
+    def __init__(
+        self,
+        ex: GateioFutures,
+        gate: LLMGate,
+        executor: Executor | None = None,
+        position_manager: PositionManager | None = None,
+    ) -> None:
         self._ex = ex
         self._gate = gate
         self._exec = executor or Executor(ex)
-        self._pending: Dict[str, Dict] = {}          # order_id -> {symbol, placed_at}
-        self._active_symbols: set[str] = set()       # entries we already placed this cycle
+        self._pos = position_manager or PositionManager(ex, self._exec)
+        self._pending: Dict[str, Dict] = {}   # entry_order_id -> {symbol, placed_at}
 
-    async def process(self, signals: List[Signal]) -> List[PlacedOrders]:
+    @property
+    def position_manager(self) -> PositionManager:
+        return self._pos
+
+    async def process(self, signals: List[Signal]) -> List[EntryReceipt]:
         if not signals:
             return []
         if not in_session():
@@ -52,14 +64,15 @@ class TradeManager:
         if not can_open_new(live):
             return []
 
-        market_table = self._ex._markets  # loaded at startup
+        tracked_syms = self._pos.active_symbols()
+        market_table = self._ex._markets
         equity = await self._ex.equity_usdt()
 
-        placed: List[PlacedOrders] = []
+        placed: List[EntryReceipt] = []
         for sig in signals:
-            if already_in_symbol(live, sig.symbol) or sig.symbol in self._active_symbols:
+            if already_in_symbol(live, sig.symbol) or sig.symbol in tracked_syms:
                 continue
-            if not can_open_new([*live, *[{"symbol": s} for s in self._active_symbols]]):
+            if not can_open_new([*live, *[{"symbol": s} for s in tracked_syms]]):
                 break
             market = market_table.get(sig.symbol)
             if market is None:
@@ -68,16 +81,17 @@ class TradeManager:
             if plan is None:
                 continue
             try:
-                orders = await self._exec.place(plan)
+                receipt = await self._exec.place_entry(plan)
             except Exception as exc:
-                log.warning("order placement failed %s: %s", sig.symbol, exc)
+                log.warning("entry placement failed %s: %s", sig.symbol, exc)
                 continue
-            self._pending[orders.entry_id] = {
+            self._pos.register(receipt, plan)
+            self._pending[receipt.order_id] = {
                 "symbol": sig.symbol,
                 "placed_at": time.time(),
             }
-            self._active_symbols.add(sig.symbol)
-            placed.append(orders)
+            tracked_syms.add(sig.symbol)
+            placed.append(receipt)
 
         return placed
 
@@ -85,5 +99,10 @@ class TradeManager:
         killed = await self._exec.cancel_stale(self._pending, time.time())
         for oid in killed:
             meta = self._pending.pop(oid, None)
-            if meta:
-                self._active_symbols.discard(meta["symbol"])
+            if not meta:
+                continue
+            # also drop any PositionManager tracking for that symbol IF it
+            # never opened (entry never filled — nothing to guard).
+            tracked = self._pos._tracked.get(meta["symbol"])  # type: ignore[attr-defined]
+            if tracked and not tracked.opened:
+                self._pos._tracked.pop(meta["symbol"], None)  # type: ignore[attr-defined]

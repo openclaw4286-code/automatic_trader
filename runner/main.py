@@ -56,10 +56,16 @@ async def scan_loop(ex: GateioFutures, universe: Universe, scanner: Scanner, man
 async def monitor_loop(ex: GateioFutures, manager: TradeManager) -> None:
     while True:
         try:
+            await manager.position_manager.tick()   # protection + partial TP + trail
             await manager.cleanup_stale()
             positions = await ex.positions()
             equity = await ex.equity_usdt()
-            log.info("equity=%.2f USDT  active=%d", equity, len(positions))
+            log.info(
+                "equity=%.2f USDT  live=%d  tracked=%d",
+                equity,
+                len(positions),
+                len(manager.position_manager.tracked()),
+            )
         except Exception as exc:
             log.exception("monitor_loop: %s", exc)
         await asyncio.sleep(POSITION_POLL_SEC)

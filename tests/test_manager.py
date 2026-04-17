@@ -10,7 +10,9 @@ from unittest.mock import patch
 from ict.models import Bias, Signal, TFAnalysis
 from llm.gate import LLMGate, Verdict
 from risk.sizing import PositionPlan
+from runner.executor import EntryReceipt
 from runner.manager import TradeManager
+from runner.position_manager import PositionManager
 
 
 # ---------------------- fakes ------------------------------------------
@@ -42,19 +44,9 @@ class _FakeExec:
     def __init__(self) -> None:
         self.placed: List[PositionPlan] = []
 
-    async def place(self, plan: PositionPlan):
+    async def place_entry(self, plan: PositionPlan) -> EntryReceipt:
         self.placed.append(plan)
-
-        class _P:
-            pass
-
-        p = _P()
-        p.entry_id = f"e-{plan.symbol}"
-        p.sl_id = f"s-{plan.symbol}"
-        p.tp_id = f"t-{plan.symbol}"
-        p.symbol = plan.symbol
-        p.plan = plan
-        return p
+        return EntryReceipt(order_id=f"e-{plan.symbol}", symbol=plan.symbol, plan=plan)
 
     async def cancel_stale(self, pending, now):
         return []
