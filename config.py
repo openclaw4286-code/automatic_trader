@@ -129,12 +129,17 @@ ORDER_TTL_SEC = 600                     # limit order expiry (matches LLM window
 # ---------------------------------------------------------------------------
 NEWS_SOURCES = [
     "cryptopanic",
-    "rss_coindesk",
+    "rss_google_news",
     "rss_cointelegraph",
+    "rss_bitcoin_magazine",
+    "rss_decrypt",
+    "rss_theblock",
+    "rss_coindesk",
+    "rss_reddit_crypto",
     "forexfactory",
     "investing_economic",
 ]
-NEWS_LOOKBACK_MIN = 60                  # how far back to fetch news
+NEWS_LOOKBACK_MIN = 120                 # how far back to fetch news (minutes)
 CRYPTOPANIC_TOKEN = os.getenv("CRYPTOPANIC_TOKEN", "")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
 
@@ -153,6 +158,11 @@ LLM_PROMPT_MAX_CHARS = 12000
 #                   CLI issues — USE CAREFULLY, no news filtering)
 #   always_wait   — skip CLI, always block trades (kill switch)
 LLM_GATE_MODE = os.getenv("LLM_GATE_MODE", "claude").lower()
+
+# What to do if the CLI raises (quota exhausted, network, etc.):
+#   wait  — default to WAIT (safe, blocks trades)
+#   pass  — default to PASS (keeps trading when LLM is down)
+LLM_FAIL_MODE = os.getenv("LLM_FAIL_MODE", "wait").lower()
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ from news.aggregator import NewsAggregator, _dedupe_sort
 from news.base import NewsItem
 from news.cryptopanic import CryptoPanic
 from news.econ_calendar import ForexFactory, InvestingCalendar
-from news.rss import CoindeskRSS
+from news.rss import CoindeskRSS, GoogleNewsCrypto
 
 
 # ----------------------- CryptoPanic ------------------------------------
@@ -52,6 +52,23 @@ def test_rss_parses_recent_item():
     titles = [i.title for i in items]
     assert "Fresh headline" in titles
     assert "Ancient" not in titles
+
+
+def test_rss_parses_atom_entries_with_link_href():
+    """Google News RSS wraps items in <entry> with <link href=...>."""
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    atom = f"""<?xml version='1.0'?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>BTC takes out weekly highs</title>
+    <link href="https://news.google.com/article/abc"/>
+    <published>{now}</published>
+  </entry>
+</feed>"""
+    items = GoogleNewsCrypto()._parse(atom, lookback_min=120)
+    assert len(items) == 1
+    assert items[0].title.startswith("BTC takes out")
+    assert items[0].url.startswith("https://news.google.com/")
 
 
 # ----------------------- ForexFactory -----------------------------------
@@ -118,6 +135,7 @@ def test_aggregator_survives_all_failures():
 if __name__ == "__main__":
     test_cryptopanic_parses_recent_and_skips_old()
     test_rss_parses_recent_item()
+    test_rss_parses_atom_entries_with_link_href()
     test_forexfactory_parses_high_impact_rows()
     test_investing_parses_rows_with_datetime_attr()
     test_dedupe_sort_orders_desc_and_removes_duplicates()

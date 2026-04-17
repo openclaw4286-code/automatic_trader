@@ -15,7 +15,15 @@ from config import NEWS_LOOKBACK_MIN, NEWS_SOURCES
 from news.base import Fetcher, NewsItem
 from news.cryptopanic import CryptoPanic
 from news.econ_calendar import ForexFactory, InvestingCalendar
-from news.rss import CoindeskRSS, CointelegraphRSS
+from news.rss import (
+    BitcoinMagazineRSS,
+    CoindeskRSS,
+    CointelegraphRSS,
+    DecryptRSS,
+    GoogleNewsCrypto,
+    RedditCryptoRSS,
+    TheBlockRSS,
+)
 from utils.logger import get_logger
 
 log = get_logger("news")
@@ -25,6 +33,11 @@ _REGISTRY: Dict[str, type[Fetcher]] = {
     "cryptopanic": CryptoPanic,
     "rss_coindesk": CoindeskRSS,
     "rss_cointelegraph": CointelegraphRSS,
+    "rss_bitcoin_magazine": BitcoinMagazineRSS,
+    "rss_decrypt": DecryptRSS,
+    "rss_theblock": TheBlockRSS,
+    "rss_google_news": GoogleNewsCrypto,
+    "rss_reddit_crypto": RedditCryptoRSS,
     "forexfactory": ForexFactory,
     "investing_economic": InvestingCalendar,
 }

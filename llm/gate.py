@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from config import (
+    LLM_FAIL_MODE,
     LLM_GATE_INTERVAL_SEC,
     LLM_GATE_MODE,
     LLM_PROMPT_FILE,
@@ -92,8 +93,9 @@ class LLMGate:
             try:
                 reply = await self._cli.ask(prompt)
             except Exception as exc:
-                log.warning("LLM call failed, defaulting to WAIT: %s", exc)
-                reply = f"WAIT\nLLM failure: {exc}"
+                fallback = "PASS" if LLM_FAIL_MODE == "pass" else "WAIT"
+                log.warning("LLM call failed, defaulting to %s: %s", fallback, exc)
+                reply = f"{fallback}\nLLM failure: {exc}"
 
             self._write_overwrite(self._response_file, reply)
             status, reason = parse_verdict(reply)
