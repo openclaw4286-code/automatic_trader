@@ -14,6 +14,7 @@ import os
 import signal as os_signal
 
 from config import (
+    CLEAN_START,
     DRY_RUN,
     LLM_GATE_INTERVAL_SEC,
     POSITION_POLL_SEC,
@@ -28,6 +29,59 @@ from utils.logger import get_logger
 from utils.session import in_session
 
 log = get_logger("main")
+
+
+async def flatten_startup_state(ex: GateioFutures) -> None:
+    """Cancel every open order and market-close every live position so
+    the bot never inherits dangling SL/TP or positions from a previous
+    (possibly buggy) run. No-op in DRY_RUN because the paper broker
+    starts fresh in-process anyway."""
+    if DRY_RUN:
+        return
+
+    try:
+        open_orders = await ex.open_orders()
+    except Exception as exc:
+        log.warning("startup flatten: open_orders() failed: %s", exc)
+        open_orders = []
+
+    cancelled = 0
+    for o in open_orders:
+        oid = str(o.get("id"))
+        sym = o.get("symbol")
+        try:
+            await ex.cancel_order(oid, sym)
+            cancelled += 1
+        except Exception as exc:
+            log.warning("startup flatten: cancel %s on %s failed: %s", oid, sym, exc)
+    if cancelled:
+        log.info("startup flatten: cancelled %d open order(s)", cancelled)
+
+    try:
+        positions = await ex.positions()
+    except Exception as exc:
+        log.warning("startup flatten: positions() failed: %s", exc)
+        positions = []
+
+    closed = 0
+    for p in positions:
+        sym = p.get("symbol")
+        qty = abs(float(p.get("contracts") or 0))
+        if qty <= 0:
+            continue
+        side_raw = (p.get("side") or "").lower()
+        direction = "long" if side_raw in ("long", "buy") else "short"
+        close_side = "sell" if direction == "long" else "buy"
+        try:
+            await ex.create_order(sym, close_side, qty, None, {"reduceOnly": True})
+            closed += 1
+            log.info("startup flatten: market-closed %s %s qty=%.6g", direction, sym, qty)
+        except Exception as exc:
+            log.warning("startup flatten: close %s failed: %s", sym, exc)
+    if closed:
+        log.info("startup flatten: closed %d live position(s)", closed)
+    if not cancelled and not closed:
+        log.info("startup flatten: nothing to clean")
 
 
 async def gate_loop(gate: LLMGate) -> None:
@@ -88,6 +142,10 @@ async def amain() -> None:
     log.info("starting ICT auto-trader (DRY_RUN=%s)", DRY_RUN)
     ex = GateioFutures()
     await ex.load()
+
+    if CLEAN_START:
+        await flatten_startup_state(ex)
+
     universe = Universe(ex)
     await universe.refresh(force=True)
     scanner = Scanner(ex)

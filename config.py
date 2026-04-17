@@ -123,6 +123,11 @@ POSITION_POLL_SEC = 15                  # live position monitor cadence
 LLM_GATE_INTERVAL_SEC = 600             # LLM re-evaluates every 10 min
 ORDER_TTL_SEC = 600                     # limit order expiry (matches LLM window)
 
+# At start-up, cancel every open order and flatten every open position
+# so the bot never inherits unmanaged state from a previous (possibly
+# buggy) run. Set CLEAN_START=false if you want to keep existing state.
+CLEAN_START = os.getenv("CLEAN_START", "true").lower() in ("1", "true", "yes")
+
 
 # ---------------------------------------------------------------------------
 # News & economic calendar — tried in order; first that works wins.
