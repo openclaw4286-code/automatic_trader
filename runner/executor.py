@@ -169,5 +169,14 @@ class Executor:
                 killed.append(order_id)
                 log.info("cancelled stale entry %s (%s)", order_id, meta["symbol"])
             except Exception as exc:
-                log.warning("cancel stale failed %s: %s", order_id, exc)
+                # Gate returns code 1034 / AUTO_ORDER_NOT_FOUND when the
+                # order already filled, expired, or was cancelled. That
+                # means it no longer needs tracking, so treat it as
+                # cleaned-up rather than spamming every tick.
+                msg = str(exc)
+                if "1034" in msg or "ORDER_NOT_FOUND" in msg.upper():
+                    killed.append(order_id)
+                    log.info("stale entry %s already gone — removing from pending", order_id)
+                else:
+                    log.warning("cancel stale failed %s: %s", order_id, exc)
         return killed

@@ -96,13 +96,19 @@ class TradeManager:
         return placed
 
     async def cleanup_stale(self) -> None:
+        # Entries whose position opened are no longer pending — drop them
+        # immediately so cleanup_stale does not keep trying to cancel a
+        # filled entry id (Gate returns AUTO_ORDER_NOT_FOUND).
+        opened = {t.symbol for t in self._pos.tracked() if t.opened}
+        for oid, meta in list(self._pending.items()):
+            if meta["symbol"] in opened:
+                self._pending.pop(oid, None)
+
         killed = await self._exec.cancel_stale(self._pending, time.time())
         for oid in killed:
             meta = self._pending.pop(oid, None)
             if not meta:
                 continue
-            # also drop any PositionManager tracking for that symbol IF it
-            # never opened (entry never filled — nothing to guard).
             tracked = self._pos._tracked.get(meta["symbol"])  # type: ignore[attr-defined]
             if tracked and not tracked.opened:
                 self._pos._tracked.pop(meta["symbol"], None)  # type: ignore[attr-defined]
