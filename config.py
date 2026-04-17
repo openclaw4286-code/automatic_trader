@@ -143,9 +143,16 @@ NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
 # LLM (Claude CLI)
 # ---------------------------------------------------------------------------
 CLAUDE_CLI = os.getenv("CLAUDE_CLI", "claude")
-CLAUDE_MODEL = "opus"
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "opus")
 CLAUDE_TIMEOUT_SEC = 120
 LLM_PROMPT_MAX_CHARS = 12000
+
+# Override the gate behaviour without touching the CLI:
+#   claude        — run claude -p --model $CLAUDE_MODEL (default)
+#   always_pass   — skip CLI, always allow trades (unblocks signals during
+#                   CLI issues — USE CAREFULLY, no news filtering)
+#   always_wait   — skip CLI, always block trades (kill switch)
+LLM_GATE_MODE = os.getenv("LLM_GATE_MODE", "claude").lower()
 
 
 # ---------------------------------------------------------------------------

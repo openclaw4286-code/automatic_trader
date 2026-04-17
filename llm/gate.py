@@ -22,6 +22,7 @@ from typing import List, Optional
 
 from config import (
     LLM_GATE_INTERVAL_SEC,
+    LLM_GATE_MODE,
     LLM_PROMPT_FILE,
     LLM_RESPONSE_FILE,
     LLM_VERDICT_FILE,
@@ -78,6 +79,13 @@ class LLMGate:
     async def evaluate_once(self) -> Verdict:
         async with self._lock:
             items = await self._news.fetch()
+
+            # bypass modes — do not call the CLI at all
+            if LLM_GATE_MODE == "always_pass":
+                return self._finalize("PASS", "LLM_GATE_MODE=always_pass", items, "always_pass")
+            if LLM_GATE_MODE == "always_wait":
+                return self._finalize("WAIT", "LLM_GATE_MODE=always_wait", items, "always_wait")
+
             prompt = build_prompt(items)
             self._write_overwrite(self._prompt_file, prompt)
 
@@ -89,22 +97,23 @@ class LLMGate:
 
             self._write_overwrite(self._response_file, reply)
             status, reason = parse_verdict(reply)
-            now = time.time()
-            v = Verdict(
-                status=status,
-                reason=reason,
-                decided_at=now,
-                expires_at=now + self._interval,
-            )
-            self._verdict = v
-            self._write_verdict(v, news_count=len(items))
-            log.info(
-                "verdict=%s (news=%d, reason=%s)",
-                status,
-                len(items),
-                reason[:120],
-            )
-            return v
+            return self._finalize(status, reason, items, "claude")
+
+    def _finalize(self, status: str, reason: str, items: List[NewsItem], source: str) -> Verdict:
+        now = time.time()
+        v = Verdict(
+            status=status,
+            reason=reason,
+            decided_at=now,
+            expires_at=now + self._interval,
+        )
+        self._verdict = v
+        self._write_verdict(v, news_count=len(items))
+        log.info(
+            "verdict=%s [%s] (news=%d, reason=%s)",
+            status, source, len(items), reason[:120],
+        )
+        return v
 
     async def run_forever(self) -> None:
         while True:

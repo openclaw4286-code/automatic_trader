@@ -42,15 +42,18 @@ class NewsAggregator:
         order = sorted(self._order, key=lambda n: (not self._health.get(n, True)))
 
         tasks = {n: asyncio.create_task(self._safe(n, lookback)) for n in order}
+        per_source: list[tuple[str, int]] = []
         results: List[NewsItem] = []
         for name, task in tasks.items():
             items = await task
+            per_source.append((name, len(items)))
             if items:
                 self._health[name] = True
                 results.extend(items)
             else:
                 self._health[name] = False
 
+        log.info("news per-source: %s", ", ".join(f"{n}={c}" for n, c in per_source))
         return _dedupe_sort(results)
 
     async def _safe(self, name: str, lookback: int) -> List[NewsItem]:

@@ -35,8 +35,11 @@ class ClaudeCLI:
             raise RuntimeError(f"claude CLI timed out after {CLAUDE_TIMEOUT_SEC}s")
 
         if proc.returncode != 0:
+            out = stdout.decode("utf-8", "replace").strip()
+            err = stderr.decode("utf-8", "replace").strip()
             raise RuntimeError(
-                f"claude CLI exited {proc.returncode}: {stderr.decode('utf-8', 'replace').strip()}"
+                f"claude CLI exited {proc.returncode}. "
+                f"stdout={out!r} stderr={err!r} cmd={' '.join(cmd)}"
             )
         return stdout.decode("utf-8", "replace").strip()
 
