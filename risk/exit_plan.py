@@ -1,7 +1,7 @@
 """Derived price levels for partial-TP, break-even, and trailing stops."""
 from __future__ import annotations
 
-from config import TP1_RR, TRAIL_ACTIVATION_RR, TRAIL_DISTANCE_R
+from config import TP1_RR, TP2_RR, TRAIL_ACTIVATION_RR, TRAIL_DISTANCE_R
 
 
 def risk_unit(entry: float, sl: float) -> float:
@@ -11,6 +11,11 @@ def risk_unit(entry: float, sl: float) -> float:
 def tp1_price(entry: float, sl: float, direction: str) -> float:
     r = risk_unit(entry, sl)
     return entry + r * TP1_RR if direction == "long" else entry - r * TP1_RR
+
+
+def tp2_price(entry: float, sl: float, direction: str) -> float:
+    r = risk_unit(entry, sl)
+    return entry + r * TP2_RR if direction == "long" else entry - r * TP2_RR
 
 
 def trail_activation_price(entry: float, sl: float, direction: str) -> float:

@@ -188,8 +188,37 @@ def test_partial_tp_triggers_and_moves_sl_to_breakeven():
         ex.open_orders_queue = [[{"id": "sl-1"}, {"id": "tp-1"}]]
         await mgr.tick()
 
-        assert fe.partial_close_calls and fe.partial_close_calls[0] == 500.0
-        assert fe.replace_sl_calls and fe.replace_sl_calls[0] == 100.0     # BE
+        assert fe.partial_close_calls and fe.partial_close_calls[0] == 400.0   # TP1_PORTION 40%
+        assert fe.replace_sl_calls and fe.replace_sl_calls[0] == 100.0          # BE
+
+    asyncio.run(_run())
+
+
+def test_tp2_partial_after_tp1():
+    """After TP1 fires at 1R, TP2 fires at 2R for the next portion."""
+    async def _run():
+        ex = _FakeExchange()
+        fe = _FakeExecutor()
+        mgr = PositionManager(ex, fe)                         # type: ignore[arg-type]
+        plan = _plan(entry=100.0, sl=99.0, tp=110.0)          # R=1
+        mgr.register(_receipt(plan), plan)
+
+        # 1) entry fills
+        ex.positions_queue = [[_live(mark=100.0)]]
+        ex.open_orders_queue = [[]]
+        await mgr.tick()
+
+        # 2) mark 101 -> TP1 fires (40% = 400 contracts)
+        ex.positions_queue = [[_live(mark=101.0, contracts=1000)]]
+        ex.open_orders_queue = [[{"id": "sl-1"}, {"id": "tp-1"}]]
+        await mgr.tick()
+        assert fe.partial_close_calls[-1] == 400.0
+
+        # 3) mark 102 -> TP2 fires (30% = 300 contracts)
+        ex.positions_queue = [[_live(mark=102.0, contracts=600)]]
+        ex.open_orders_queue = [[{"id": "sl-2"}, {"id": "tp-1"}]]
+        await mgr.tick()
+        assert fe.partial_close_calls[-1] == 300.0
 
     asyncio.run(_run())
 
@@ -251,6 +280,7 @@ if __name__ == "__main__":
     test_missing_sl_is_reattached_on_next_tick()
     test_attach_failures_trigger_emergency_close()
     test_partial_tp_triggers_and_moves_sl_to_breakeven()
+    test_tp2_partial_after_tp1()
     test_trailing_stop_tightens_when_price_runs()
     test_position_vanishing_drops_tracking()
     print("all position_manager tests passed")

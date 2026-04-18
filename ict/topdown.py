@@ -18,9 +18,25 @@ from typing import List, Optional
 
 import pandas as pd
 
-from config import HTF_SWEEP_REQUIRED, MIN_RR, MTF_EVENT_LOOKBACK_BARS
+from config import (
+    HTF_EMA_PERIOD,
+    HTF_EMA_SLOPE_BARS,
+    HTF_MOMENTUM_FILTER,
+    HTF_SWEEP_REQUIRED,
+    MIN_RR,
+    MTF_EVENT_LOOKBACK_BARS,
+    SL_ATR_PAD,
+    VOL_MULT_TRIGGER,
+)
 from ict.models import Bias, Signal, TFAnalysis, Zone
-from ict.patterns import detect_fvgs, detect_order_blocks, detect_sweep
+from ict.patterns import (
+    atr,
+    detect_fvgs,
+    detect_order_blocks,
+    detect_sweep,
+    ema,
+    volume_confirms,
+)
 from ict.structure import detect_structure, detect_swings
 from utils.logger import get_logger
 
@@ -85,6 +101,15 @@ def _next_liquidity_target(a: TFAnalysis, direction: str, price: float) -> Optio
     return max(lows) if lows else None
 
 
+def _htf_momentum_ok(htf_df: pd.DataFrame, direction: str) -> bool:
+    """HTF EMA(50) must be sloping in the structural direction."""
+    if len(htf_df) < HTF_EMA_PERIOD + HTF_EMA_SLOPE_BARS + 1:
+        return True   # not enough data — don't reject
+    e = ema(htf_df["close"], HTF_EMA_PERIOD)
+    slope = float(e.iloc[-1] - e.iloc[-1 - HTF_EMA_SLOPE_BARS])
+    return slope > 0 if direction == "long" else slope < 0
+
+
 def _structural_sl(
     mtf_zone: Optional[Zone],
     mtf: TFAnalysis,
@@ -123,6 +148,11 @@ def top_down(
     if HTF_SWEEP_REQUIRED and not htf_sweep_aligned:
         return None
 
+    # Momentum filter (Moskowitz et al. 2012): HTF EMA must be sloping
+    # in the structural direction, otherwise the bias is being faded.
+    if HTF_MOMENTUM_FILTER and not _htf_momentum_ok(htf_df, direction):
+        return None
+
     htf_zones = _zones_in_direction(htf, direction)
     if not htf_zones:
         return None
@@ -154,6 +184,12 @@ def top_down(
     if not (ltf_sweep_aligned or has_trigger):
         return None
 
+    # Volume confirmation on the trigger candle (Karpoff 1987). Use the LTF
+    # sweep candle if a sweep is what triggered, otherwise the latest bar.
+    trigger_idx = ltf.sweep.idx if ltf_sweep_aligned else len(ltf_df) - 1
+    if not volume_confirms(ltf_df, trigger_idx, VOL_MULT_TRIGGER):
+        return None
+
     ltf_zone = _zone_containing(_zones_in_direction(ltf, direction), price)
     if ltf_zone is None:
         return None
@@ -169,19 +205,27 @@ def top_down(
     if structural is None:
         return None
 
+    # ATR-pad on top of the structural anchor. Variance-scaled stops
+    # (Engle 1982; Bollerslev 1986) measurably reduce false stop-outs by
+    # backing the SL beyond the typical bar's noise.
+    atr_mtf = float(atr(mtf_df).iloc[-1] or 0)
+    pad = atr_mtf * SL_ATR_PAD
+
     if direction == "long":
         entry = ltf_zone.top
         anchors = [structural]
         if ltf_sweep_level is not None and ltf_sweep_level < structural:
             anchors.append(ltf_sweep_level)
-        sl = min(anchors) * 0.999
+        sl = min(anchors) - pad
+        sl *= 0.999
         tp = _next_liquidity_target(htf, "long", entry) or (entry + (entry - sl) * MIN_RR)
     else:
         entry = ltf_zone.bottom
         anchors = [structural]
         if ltf_sweep_level is not None and ltf_sweep_level > structural:
             anchors.append(ltf_sweep_level)
-        sl = max(anchors) * 1.001
+        sl = max(anchors) + pad
+        sl *= 1.001
         tp = _next_liquidity_target(htf, "short", entry) or (entry - (sl - entry) * MIN_RR)
 
     htf_sweep_txt = (

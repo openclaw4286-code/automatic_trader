@@ -26,6 +26,7 @@ from config import (
     BREAKEVEN_AFTER_TP1,
     PROTECTION_MAX_RETRY,
     TP1_PORTION,
+    TP2_PORTION,
     TRAIL_ENABLED,
 )
 from exchange.gateio import GateioFutures
@@ -34,6 +35,7 @@ from risk.exit_plan import (
     risk_unit,
     sl_improved,
     tp1_price,
+    tp2_price,
     trail_activation_price,
     trailing_sl,
 )
@@ -59,6 +61,7 @@ class TrackedPosition:
     tp_order_id: Optional[str] = None
     opened: bool = False
     tp1_done: bool = False
+    tp2_done: bool = False
     breakeven_moved: bool = False
     best_price: Optional[float] = None
     attach_retries: int = 0
@@ -136,10 +139,11 @@ class PositionManager:
         if not await self._ensure_protected(t):
             return  # either retried or emergency-closed; come back next tick
 
-        # ---- 2. partial TP --------------------------------------------------
+        # ---- 2. multi-tier partial TP --------------------------------------
         await self._check_partial_tp(t, live)
+        await self._check_partial_tp2(t, live)
 
-        # ---- 3. trailing ----------------------------------------------------
+        # ---- 3. trailing (runner only) -------------------------------------
         await self._check_trailing(t, live)
 
     # ----------------------------------------------------------- protection
@@ -201,25 +205,27 @@ class PositionManager:
         log.info("dropping %s (%s)", t.symbol, reason)
         self._tracked.pop(t.symbol, None)
 
-    # ------------------------------------------------------------ partial TP
+    # ------------------------------------------------------------ partial TPs
     async def _check_partial_tp(self, t: TrackedPosition, live: Dict[str, Any]) -> None:
+        """First tier: close TP1_PORTION of original qty at 1R, then BE."""
         if t.tp1_done:
             return
         mark = _mark_price(live, fallback=t.entry)
         target = tp1_price(t.entry, t.initial_sl, t.direction)
         if not reached(mark, target, t.direction):
             return
-        partial = t.qty_remaining * TP1_PORTION
+        # use qty_ORIGINAL so the fraction is unambiguous across tiers
+        partial = min(t.qty_original * TP1_PORTION, t.qty_remaining)
         if partial <= 0:
             return
         try:
             await self._exec.partial_close(t.symbol, t.direction, partial)
         except Exception as exc:
-            log.warning("partial TP failed %s: %s", t.symbol, exc)
+            log.warning("TP1 partial close failed %s: %s", t.symbol, exc)
             return
         t.qty_remaining -= partial
         t.tp1_done = True
-        log.info("partial TP filled %s qty=%.6g remaining=%.6g", t.symbol, partial, t.qty_remaining)
+        log.info("TP1 filled %s qty=%.6g remaining=%.6g", t.symbol, partial, t.qty_remaining)
 
         if BREAKEVEN_AFTER_TP1 and not t.breakeven_moved:
             try:
@@ -232,6 +238,34 @@ class PositionManager:
             except Exception as exc:
                 log.error("BE move failed %s: %s — flagging for emergency", t.symbol, exc)
                 await self._emergency_close(t, "BE move failed")
+
+    async def _check_partial_tp2(self, t: TrackedPosition, live: Dict[str, Any]) -> None:
+        """Second tier: at TP2_RR (default 2R) close TP2_PORTION of original qty.
+        SL stays at break-even, runner is what's left."""
+        if not t.tp1_done or t.tp2_done or t.qty_remaining <= 0:
+            return
+        mark = _mark_price(live, fallback=t.entry)
+        target = tp2_price(t.entry, t.initial_sl, t.direction)
+        if not reached(mark, target, t.direction):
+            return
+        partial = min(t.qty_original * TP2_PORTION, t.qty_remaining)
+        if partial <= 0:
+            return
+        try:
+            await self._exec.partial_close(t.symbol, t.direction, partial)
+        except Exception as exc:
+            log.warning("TP2 partial close failed %s: %s", t.symbol, exc)
+            return
+        t.qty_remaining -= partial
+        t.tp2_done = True
+        log.info("TP2 filled %s qty=%.6g remaining=%.6g (runner)", t.symbol, partial, t.qty_remaining)
+        # resize the SL so its qty matches the remaining runner
+        try:
+            t.sl_order_id = await self._exec.replace_stop_loss(
+                t.symbol, t.direction, t.qty_remaining, t.sl_order_id, t.current_sl
+            )
+        except Exception as exc:
+            log.warning("SL resize after TP2 failed %s: %s", t.symbol, exc)
 
     # ------------------------------------------------------------- trailing
     async def _check_trailing(self, t: TrackedPosition, live: Dict[str, Any]) -> None:

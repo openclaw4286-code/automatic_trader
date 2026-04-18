@@ -12,6 +12,9 @@ from config import (
     LIQUIDITY_TOLERANCE_PCT,
     OB_LOOKBACK,
     SWEEP_LOOKBACK,
+    SWEEP_WICK_RATIO,
+    VOL_MULT_SWEEP,
+    VOL_SMA_BARS,
 )
 from ict.models import Swing, Sweep, Zone
 
@@ -121,8 +124,13 @@ def detect_sweep(df: pd.DataFrame, lookback: int = SWEEP_LOOKBACK) -> Optional[S
 
     Long sweep (bearish liquidity taken) → expect reversal up.
     Short sweep (bullish liquidity taken) → expect reversal down.
+
+    Quality gates (Bouchaud & Bonart 2018; Karpoff 1987):
+      * the rejecting wick must cover at least SWEEP_WICK_RATIO of the
+        candle range — true stop-runs leave a long tail, soft drifts do not
+      * the candle's volume must exceed VOL_MULT_SWEEP × SMA(VOL_SMA_BARS).
     """
-    if len(df) < lookback + 2:
+    if len(df) < max(lookback, VOL_SMA_BARS) + 2:
         return None
 
     i = len(df) - 1
@@ -130,14 +138,42 @@ def detect_sweep(df: pd.DataFrame, lookback: int = SWEEP_LOOKBACK) -> Optional[S
     last_low = float(df["low"].iloc[i])
     last_close = float(df["close"].iloc[i])
     last_high = float(df["high"].iloc[i])
+    last_open = float(df["open"].iloc[i])
+    last_vol = float(df["volume"].iloc[i])
+    rng = max(last_high - last_low, 1e-12)
+
+    vol_sma = float(df["volume"].iloc[max(0, i - VOL_SMA_BARS) : i].mean() or 0)
+    vol_ok = vol_sma > 0 and last_vol >= vol_sma * VOL_MULT_SWEEP
 
     prior_low = float(tail["low"].min())
     prior_high = float(tail["high"].max())
     tol_low = prior_low * (1 - LIQUIDITY_TOLERANCE_PCT)
     tol_high = prior_high * (1 + LIQUIDITY_TOLERANCE_PCT)
 
+    body_top = max(last_open, last_close)
+    body_bot = min(last_open, last_close)
+    lower_wick = body_bot - last_low
+    upper_wick = last_high - body_top
+
     if last_low < tol_low and last_close > prior_low:
-        return Sweep(direction="long", idx=i, swept_level=prior_low)
+        if (lower_wick / rng) >= SWEEP_WICK_RATIO and vol_ok:
+            return Sweep(direction="long", idx=i, swept_level=prior_low)
     if last_high > tol_high and last_close < prior_high:
-        return Sweep(direction="short", idx=i, swept_level=prior_high)
+        if (upper_wick / rng) >= SWEEP_WICK_RATIO and vol_ok:
+            return Sweep(direction="short", idx=i, swept_level=prior_high)
     return None
+
+
+def volume_confirms(df: pd.DataFrame, idx: int, mult: float, bars: int = VOL_SMA_BARS) -> bool:
+    """True iff the candle at idx has volume >= mult * SMA(bars)."""
+    if idx <= 0 or idx >= len(df):
+        return False
+    start = max(0, idx - bars)
+    sma = float(df["volume"].iloc[start:idx].mean() or 0)
+    if sma <= 0:
+        return False
+    return float(df["volume"].iloc[idx]) >= sma * mult
+
+
+def ema(series: pd.Series, period: int) -> pd.Series:
+    return series.ewm(span=period, adjust=False).mean()
