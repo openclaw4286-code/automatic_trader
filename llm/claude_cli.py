@@ -44,18 +44,27 @@ class ClaudeCLI:
         return stdout.decode("utf-8", "replace").strip()
 
 
+_KNOWN = ("LONG_ONLY", "SHORT_ONLY", "PASS", "WAIT")
+
+
 def parse_verdict(text: str) -> Tuple[str, str]:
-    """Parse '<PASS|WAIT>\\n<reason>' response; defaults to WAIT on ambiguity."""
+    """Parse a verdict of PASS / LONG_ONLY / SHORT_ONLY / WAIT followed by a
+    reason on the next line. Defaults to WAIT on ambiguity."""
     lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
     if not lines:
         return "WAIT", "empty LLM response"
-    head = lines[0].upper()
+    head = lines[0].upper().replace("-", "_").replace(" ", "_")
     reason = lines[1] if len(lines) > 1 else ""
-    if head.startswith("PASS"):
+
+    # LONG_ONLY / SHORT_ONLY must be checked before plain "PASS" match.
+    for token in ("LONG_ONLY", "SHORT_ONLY"):
+        if token in head:
+            return token, reason
+    if head.startswith("PASS") or head == "PASS":
         return "PASS", reason
-    if head.startswith("WAIT"):
+    if head.startswith("WAIT") or head == "WAIT":
         return "WAIT", reason
-    # tolerate the token appearing inline anywhere on the first line
-    if "PASS" in head and "WAIT" not in head:
-        return "PASS", reason
+    for token in _KNOWN:
+        if token in head:
+            return token, reason
     return "WAIT", f"unparsable: {lines[0][:80]}"

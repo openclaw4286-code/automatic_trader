@@ -102,8 +102,16 @@ def plan_position(
     signal: Signal,
     equity_usdt: float,
     market: Dict[str, Any],
+    *,
+    risk_scale: float = 1.0,
+    margin_scale: float = 1.0,
 ) -> PositionPlan | None:
-    """Return a concrete, executable position plan, or None if unsizable."""
+    """Return a concrete, executable position plan, or None if unsizable.
+
+    ``risk_scale`` multiplies RISK_PER_TRADE (defensive LLM regimes pass
+    0.5 here so a LONG_ONLY short uses 1.25% of equity instead of 2.5%).
+    ``margin_scale`` multiplies MAX_MARGIN (cap the final margin at e.g.
+    5% of equity in defensive mode, down from the default 10%)."""
     if equity_usdt <= 0:
         return None
 
@@ -121,7 +129,7 @@ def plan_position(
             signal.symbol, sl_pct * 100, MIN_SL_PCT * 100,
         )
         return None
-    risk_budget = equity_usdt * RISK_PER_TRADE
+    risk_budget = equity_usdt * RISK_PER_TRADE * risk_scale
 
     # 1) notional from risk budget (linear USDT-settled: PnL = notional * dPct)
     notional = risk_budget / sl_pct
@@ -136,7 +144,7 @@ def plan_position(
 
     margin = notional / leverage
     capped = False
-    max_margin_usdt = equity_usdt * MAX_MARGIN
+    max_margin_usdt = equity_usdt * MAX_MARGIN * margin_scale
 
     # 3) margin cap
     if margin > max_margin_usdt:

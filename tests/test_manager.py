@@ -58,16 +58,18 @@ def _sig(symbol: str, entry=100.0, sl=99.0, tp=102.0, direction="long") -> Signa
                   reason="t", htf=tf, mtf=tf, ltf=tf)
 
 
-def _gate_pass() -> LLMGate:
+def _gate(status: str) -> LLMGate:
     g = LLMGate.__new__(LLMGate)
-    g._verdict = Verdict(status="PASS", reason="clean", decided_at=time.time(), expires_at=time.time() + 600)
+    g._verdict = Verdict(status=status, reason="t", decided_at=time.time(), expires_at=time.time() + 600)
     return g
+
+
+def _gate_pass() -> LLMGate:
+    return _gate("PASS")
 
 
 def _gate_wait() -> LLMGate:
-    g = LLMGate.__new__(LLMGate)
-    g._verdict = Verdict(status="WAIT", reason="CPI", decided_at=time.time(), expires_at=time.time() + 600)
-    return g
+    return _gate("WAIT")
 
 
 # ---------------------- tests ------------------------------------------
@@ -140,10 +142,63 @@ def test_multiple_signals_respect_intra_cycle_dedupe():
         mgr = TradeManager(ex, _gate_pass(), execu)
         sigs = [_sig("BTC/USDT:USDT"), _sig("BTC/USDT:USDT"), _sig("ETH/USDT:USDT", entry=2000, sl=1980, tp=2050)]
         with patch("runner.manager.in_session", return_value=True):
-            placed = await mgr.process(sigs)
+            with patch("runner.manager.in_pre_weekend_freeze", return_value=False):
+                placed = await mgr.process(sigs)
         symbols = sorted([p.symbol for p in execu.placed])
         assert symbols == ["BTC/USDT:USDT", "ETH/USDT:USDT"]
         assert len(placed) == 2
+
+    asyncio.run(_run())
+
+
+def test_long_only_blocks_shorts_and_halves_long_size():
+    async def _run():
+        ex = _FakeExchange()
+        execu = _FakeExec()
+        mgr = TradeManager(ex, _gate("LONG_ONLY"), execu)
+        sigs = [
+            _sig("BTC/USDT:USDT", direction="long"),
+            _sig("ETH/USDT:USDT", entry=2000, sl=1980, tp=2050, direction="short"),
+        ]
+        with patch("runner.manager.in_session", return_value=True):
+            with patch("runner.manager.in_pre_weekend_freeze", return_value=False):
+                placed = await mgr.process(sigs)
+        # long accepted (half size), short blocked
+        assert len(placed) == 1
+        assert placed[0].symbol == "BTC/USDT:USDT"
+        # half-size proof: expected_loss at half of RISK_PER_TRADE * equity
+        from config import RISK_PER_TRADE
+        expected = ex._equity * RISK_PER_TRADE * 0.5
+        assert abs(execu.placed[0].expected_loss_usdt - expected) / expected < 0.05
+
+    asyncio.run(_run())
+
+
+def test_pre_weekend_freeze_blocks_new_entries():
+    async def _run():
+        ex = _FakeExchange()
+        execu = _FakeExec()
+        mgr = TradeManager(ex, _gate_pass(), execu)
+        with patch("runner.manager.in_session", return_value=True):
+            with patch("runner.manager.in_pre_weekend_freeze", return_value=True):
+                placed = await mgr.process([_sig("BTC/USDT:USDT")])
+        assert placed == []
+
+    asyncio.run(_run())
+
+
+def test_directional_verdict_halves_position_cap():
+    async def _run():
+        # 5 live positions is below the default cap (10) but at/over the halved
+        # cap (5) once LLM goes directional — should refuse new entries.
+        live = [{"symbol": f"X{i}/USDT:USDT", "contracts": 1} for i in range(5)]
+        ex = _FakeExchange(positions=live)
+        execu = _FakeExec()
+        mgr = TradeManager(ex, _gate("LONG_ONLY"), execu)
+        with patch("runner.manager.in_session", return_value=True):
+            with patch("runner.manager.in_pre_weekend_freeze", return_value=False):
+                placed = await mgr.process([_sig("BTC/USDT:USDT", direction="long")])
+        assert placed == []
 
     asyncio.run(_run())
 
@@ -155,4 +210,7 @@ if __name__ == "__main__":
     test_duplicate_symbol_is_skipped_if_already_live()
     test_position_cap_stops_new_entries()
     test_multiple_signals_respect_intra_cycle_dedupe()
+    test_long_only_blocks_shorts_and_halves_long_size()
+    test_pre_weekend_freeze_blocks_new_entries()
+    test_directional_verdict_halves_position_cap()
     print("all manager tests passed")

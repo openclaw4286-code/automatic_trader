@@ -74,6 +74,11 @@ SESSIONS_KST: List[Tuple[str, str]] = [
 # only exist Mon-Fri; weekend books are thin and often manipulative.
 TRADE_WEEKDAYS_KST: set[int] = {0, 1, 2, 3, 4}
 
+# Block new entries this many minutes before the weekly last-session end,
+# and flatten all orders + positions at that end so we never hold over the
+# weekend.
+WEEKEND_FREEZE_LEAD_MIN = 60
+
 
 # ---------------------------------------------------------------------------
 # ICT analysis parameters

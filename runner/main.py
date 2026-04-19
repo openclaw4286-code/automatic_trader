@@ -20,13 +20,15 @@ from config import (
     POSITION_POLL_SEC,
     SCAN_INTERVAL_SEC,
 )
+from datetime import datetime
+
 from exchange.gateio import GateioFutures
 from exchange.universe import Universe
 from llm.gate import LLMGate
 from runner.manager import TradeManager
 from runner.scanner import Scanner
 from utils.logger import get_logger
-from utils.session import in_session
+from utils.session import crossed_weekend_boundary, in_session
 
 log = get_logger("main")
 
@@ -109,11 +111,19 @@ async def scan_loop(ex: GateioFutures, universe: Universe, scanner: Scanner, man
 
 
 async def monitor_loop(ex: GateioFutures, manager: TradeManager) -> None:
+    last_tick = datetime.now().astimezone()
     while True:
         try:
             await ex.paper_tick()                   # DRY_RUN: virtual SL/TP fills
             await manager.position_manager.tick()   # protection + partial TP + trail
             await manager.cleanup_stale()
+
+            now = datetime.now().astimezone()
+            if crossed_weekend_boundary(last_tick, now):
+                log.warning("weekend boundary crossed — flattening all state")
+                await flatten_startup_state(ex)
+            last_tick = now
+
             positions = await ex.positions()
             equity = await ex.equity_usdt()
             log.info(

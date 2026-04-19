@@ -41,7 +41,9 @@ def test_prompt_has_required_sections_and_tokens():
     )
     assert "HIGH-IMPACT ECONOMIC EVENTS" in prompt
     assert "HEADLINES" in prompt
-    assert "PASS or WAIT" in prompt
+    # 4-state verdict prompt
+    for tok in ("PASS", "LONG_ONLY", "SHORT_ONLY", "WAIT"):
+        assert tok in prompt
     assert "BTC makes new high" in prompt
     assert "CPI" in prompt
 
@@ -68,6 +70,46 @@ def test_parse_ambiguous_defaults_to_wait():
 
 def test_parse_empty_defaults_to_wait():
     assert parse_verdict("")[0] == "WAIT"
+
+
+def test_parse_long_only_and_short_only():
+    assert parse_verdict("LONG_ONLY\nrisk-on")[0] == "LONG_ONLY"
+    assert parse_verdict("SHORT_ONLY\nrisk-off")[0] == "SHORT_ONLY"
+    assert parse_verdict("LONG ONLY\nnoted")[0] == "LONG_ONLY"    # tolerant
+
+
+def test_gate_direction_and_scale_for_all_verdicts():
+    import asyncio, tempfile, os, time
+    from llm.gate import Verdict
+
+    async def _run(status, want_long, want_short, want_scale_long, want_scale_short):
+        with tempfile.TemporaryDirectory() as td:
+            gate, _ = _make_gate(f"{status}\nreason", td)
+            await gate.evaluate_once()
+            assert gate.allow_direction("long") == want_long
+            assert gate.allow_direction("short") == want_short
+            assert abs(gate.size_scale("long") - want_scale_long) < 1e-9
+            assert abs(gate.size_scale("short") - want_scale_short) < 1e-9
+
+    asyncio.run(_run("PASS",        True,  True,  1.0, 1.0))
+    asyncio.run(_run("LONG_ONLY",   True,  False, 0.5, 0.0))
+    asyncio.run(_run("SHORT_ONLY",  False, True,  0.0, 0.5))
+    asyncio.run(_run("WAIT",        False, False, 0.0, 0.0))
+
+
+def test_gate_position_cap_halves_on_directional():
+    import asyncio, tempfile
+
+    async def _run(status, base, expected):
+        with tempfile.TemporaryDirectory() as td:
+            gate, _ = _make_gate(f"{status}\nreason", td)
+            await gate.evaluate_once()
+            assert gate.position_cap(base) == expected
+
+    asyncio.run(_run("PASS",       10, 10))
+    asyncio.run(_run("LONG_ONLY",  10, 5))
+    asyncio.run(_run("SHORT_ONLY", 10, 5))
+    asyncio.run(_run("WAIT",       10, 0))
 
 
 # --------------------------- overwrite gate -----------------------------
@@ -195,6 +237,9 @@ if __name__ == "__main__":
     test_parse_wait()
     test_parse_ambiguous_defaults_to_wait()
     test_parse_empty_defaults_to_wait()
+    test_parse_long_only_and_short_only()
+    test_gate_direction_and_scale_for_all_verdicts()
+    test_gate_position_cap_halves_on_directional()
     test_gate_pass_allows_trades_and_caches_until_expiry()
     test_gate_wait_blocks_trades()
     test_files_are_overwritten_never_appended()

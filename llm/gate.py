@@ -48,7 +48,9 @@ class Verdict:
         return time.time() < self.expires_at
 
     def allow(self) -> bool:
-        return self.status == "PASS" and self.fresh()
+        """Any-direction admissibility. True for PASS and directional modes
+        (callers still need allow_direction to confirm the specific side)."""
+        return self.fresh() and self.status in ("PASS", "LONG_ONLY", "SHORT_ONLY")
 
 
 class LLMGate:
@@ -76,6 +78,57 @@ class LLMGate:
 
     def allow_trades(self) -> bool:
         return bool(self._verdict and self._verdict.allow())
+
+    def allow_direction(self, direction: str) -> bool:
+        """True iff the LLM verdict permits a trade in `direction` ('long'|'short')."""
+        v = self._verdict
+        if v is None or not v.fresh():
+            return False
+        status = v.status
+        if status == "PASS":
+            return True
+        if status == "WAIT":
+            return False
+        if status == "LONG_ONLY":
+            return direction == "long"
+        if status == "SHORT_ONLY":
+            return direction == "short"
+        return False
+
+    def size_scale(self, direction: str) -> float:
+        """Risk-budget and margin-cap multiplier for a trade in `direction`.
+
+        PASS         → 1.0 (normal size).
+        LONG_ONLY / SHORT_ONLY → 0.5 for the allowed direction (defensive).
+        WAIT / blocked direction → 0.0 (caller should not trade).
+        """
+        v = self._verdict
+        if v is None or not v.fresh():
+            return 0.0
+        if v.status == "PASS":
+            return 1.0
+        if v.status == "WAIT":
+            return 0.0
+        if v.status == "LONG_ONLY":
+            return 0.5 if direction == "long" else 0.0
+        if v.status == "SHORT_ONLY":
+            return 0.5 if direction == "short" else 0.0
+        return 0.0
+
+    def position_cap(self, base_cap: int) -> int:
+        """Halve the concurrent-position cap when LLM has blocked one side
+        (defensive regime). If already above the halved cap, the manager
+        will refuse new entries. PASS uses the full base cap; WAIT → 0."""
+        v = self._verdict
+        if v is None or not v.fresh():
+            return 0
+        if v.status == "PASS":
+            return base_cap
+        if v.status == "WAIT":
+            return 0
+        if v.status in ("LONG_ONLY", "SHORT_ONLY"):
+            return base_cap // 2
+        return 0
 
     async def evaluate_once(self) -> Verdict:
         async with self._lock:

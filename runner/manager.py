@@ -13,15 +13,16 @@ from __future__ import annotations
 import time
 from typing import Dict, List
 
+from config import MAX_CONCURRENT_POSITIONS
 from exchange.gateio import GateioFutures
 from ict.models import Signal
 from llm.gate import LLMGate
-from risk.portfolio import already_in_symbol, can_open_new
+from risk.portfolio import already_in_symbol
 from risk.sizing import plan_position
 from runner.executor import EntryReceipt, Executor
 from runner.position_manager import PositionManager
 from utils.logger import get_logger
-from utils.session import in_session
+from utils.session import in_pre_weekend_freeze, in_session
 
 log = get_logger("manager")
 
@@ -50,6 +51,9 @@ class TradeManager:
         if not in_session():
             log.debug("outside session — skipping %d signals", len(signals))
             return []
+        if in_pre_weekend_freeze():
+            log.info("pre-weekend freeze — %d signals skipped", len(signals))
+            return []
         if not self._gate.allow_trades():
             v = self._gate.verdict
             log.info(
@@ -61,10 +65,18 @@ class TradeManager:
             return []
 
         live = await self._ex.positions()
-        if not can_open_new(live):
+        tracked_syms = self._pos.active_symbols()
+        effective_cap = self._gate.position_cap(MAX_CONCURRENT_POSITIONS)
+        total_open = len(live) + len(tracked_syms - {p.get("symbol") for p in live})
+        if total_open >= effective_cap:
+            log.info(
+                "position cap hit (%d/%d, LLM=%s) — skipping new entries",
+                total_open,
+                effective_cap,
+                self._gate.verdict.status if self._gate.verdict else "-",
+            )
             return []
 
-        tracked_syms = self._pos.active_symbols()
         market_table = self._ex._markets
         equity = await self._ex.equity_usdt()
 
@@ -72,12 +84,25 @@ class TradeManager:
         for sig in signals:
             if already_in_symbol(live, sig.symbol) or sig.symbol in tracked_syms:
                 continue
-            if not can_open_new([*live, *[{"symbol": s} for s in tracked_syms]]):
+            if not self._gate.allow_direction(sig.direction):
+                log.info(
+                    "LLM blocks direction=%s for %s (verdict=%s)",
+                    sig.direction,
+                    sig.symbol,
+                    self._gate.verdict.status if self._gate.verdict else "-",
+                )
+                continue
+            scale = self._gate.size_scale(sig.direction)
+            if scale <= 0:
+                continue
+            # Re-check cap before EACH entry (we may have placed some in this cycle)
+            open_count = len(live) + len(tracked_syms)
+            if open_count >= effective_cap:
                 break
             market = market_table.get(sig.symbol)
             if market is None:
                 continue
-            plan = plan_position(sig, equity, market)
+            plan = plan_position(sig, equity, market, risk_scale=scale, margin_scale=scale)
             if plan is None:
                 continue
             try:

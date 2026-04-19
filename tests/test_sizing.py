@@ -77,6 +77,25 @@ def test_min_sl_pct_rejects_ultra_tight_stops():
     assert plan is None
 
 
+def test_risk_scale_halves_loss_at_sl():
+    sig = _signal(entry=100.0, sl=99.0, tp=102.0)
+    full = plan_position(sig, 10_000.0, MARKET)
+    half = plan_position(sig, 10_000.0, MARKET, risk_scale=0.5)
+    assert full is not None and half is not None
+    assert abs(half.expected_loss_usdt - full.expected_loss_usdt / 2) / full.expected_loss_usdt < 0.05
+
+
+def test_margin_scale_halves_margin_cap():
+    # Setup where the full-scale plan gets margin-capped so we can observe
+    # the half-scale plan capping at exactly half the margin.
+    sig = _signal(entry=100.0, sl=99.55, tp=102.0)
+    full = plan_position(sig, 10_000.0, MARKET)
+    half = plan_position(sig, 10_000.0, MARKET, risk_scale=0.5, margin_scale=0.5)
+    assert full is not None and half is not None
+    assert full.capped_by_margin
+    assert half.margin_usdt <= 10_000.0 * 0.05 + 1e-6
+
+
 if __name__ == "__main__":
     test_loss_at_sl_matches_risk_budget()
     test_leverage_fits_inside_sl()
@@ -84,4 +103,6 @@ if __name__ == "__main__":
     test_short_direction()
     test_tiny_qty_rejected()
     test_min_sl_pct_rejects_ultra_tight_stops()
+    test_risk_scale_halves_loss_at_sl()
+    test_margin_scale_halves_margin_cap()
     print("all sizing tests passed")

@@ -10,17 +10,29 @@ from news.base import NewsItem
 
 _SYSTEM = """You are the final-gate risk officer for an ICT algorithmic
 crypto-futures bot. The bot has already decided entries, stop-losses,
-and take-profits. Your job is to decide whether the *next 10 minutes*
-is a safe window to place those orders, purely from news and economic
-events. Answer on a single first line with exactly one token:
-PASS or WAIT. On the second line, a short reason (<= 20 words).
+and take-profits. Your job is to decide — purely from news and macro
+events — how the *next 10 minutes* should be traded. Answer on the
+first line with EXACTLY one of these four tokens:
+
+  PASS         both longs and shorts allowed at full size
+  LONG_ONLY    shorts blocked; longs allowed (at half size, news-sensitive)
+  SHORT_ONLY   longs blocked; shorts allowed (at half size, news-sensitive)
+  WAIT         both blocked
+
+On the second line, a short reason (<= 20 words).
 
 Rules:
 - WAIT if a high-impact USD macro release (CPI, NFP, FOMC, PCE) is due
-  within the next 15 minutes or has just dropped (last 5 minutes).
+  within the next 15 minutes or has just dropped (last 5 minutes) and
+  direction of reaction is unclear.
 - WAIT on confirmed major exploit / exchange outage / large regulatory
   action news against a top-10 coin.
-- PASS otherwise, even if headlines are noisy.
+- LONG_ONLY when news skews bullish enough that short exposure is
+  risky (e.g. broad crypto-positive regulatory news, strong risk-on
+  macro print that already printed).
+- SHORT_ONLY when news skews bearish (e.g. exploit of a smaller
+  protocol with contagion risk, hawkish macro shift, weak risk-off).
+- PASS otherwise, even if headlines are noisy but balanced.
 """
 
 
@@ -54,7 +66,7 @@ Window to evaluate: next 10 minutes.
 [HEADLINES — most recent first]
 {_format_items(headlines[:40])}
 
-Respond now. Line 1: PASS or WAIT. Line 2: reason.
+Respond now. Line 1: one of PASS / LONG_ONLY / SHORT_ONLY / WAIT. Line 2: reason.
 """
     if len(body) > LLM_PROMPT_MAX_CHARS:
         body = body[: LLM_PROMPT_MAX_CHARS - 200] + "\n...[truncated]\n"
