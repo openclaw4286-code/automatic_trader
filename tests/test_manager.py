@@ -187,6 +187,60 @@ def test_pre_weekend_freeze_blocks_new_entries():
     asyncio.run(_run())
 
 
+def test_same_direction_cooldown_skips_second_entry():
+    async def _run():
+        ex = _FakeExchange()
+        execu = _FakeExec()
+        mgr = TradeManager(ex, _gate_pass(), execu)
+        with patch("runner.manager.in_session", return_value=True), \
+             patch("runner.manager.in_pre_weekend_freeze", return_value=False):
+            first = await mgr.process([_sig("BTC/USDT:USDT", direction="long")])
+            # same (symbol, direction) again next cycle → cooldown blocks
+            second = await mgr.process([_sig("BTC/USDT:USDT", direction="long")])
+        assert len(first) == 1
+        assert second == []
+
+    asyncio.run(_run())
+
+
+def test_cooldown_is_per_direction_not_whole_symbol():
+    async def _run():
+        ex = _FakeExchange()
+        execu = _FakeExec()
+        mgr = TradeManager(ex, _gate_pass(), execu)
+        # pre-populate only the cooldown so we directly test the per-direction
+        # check independently of the symbol-already-tracked guard.
+        mgr._recent_entries[("BTC/USDT:USDT", "long")] = time.time()
+        sig_short = _sig("BTC/USDT:USDT", direction="short", sl=101.0, tp=98.0)
+        with patch("runner.manager.in_session", return_value=True), \
+             patch("runner.manager.in_pre_weekend_freeze", return_value=False):
+            placed = await mgr.process([sig_short])
+        # short should NOT be blocked by the long-direction cooldown
+        assert len(placed) == 1
+        assert placed[0].plan.direction == "short"
+
+    asyncio.run(_run())
+
+
+def test_cooldown_expires_after_window():
+    async def _run():
+        from config import SAME_DIRECTION_COOLDOWN_MIN
+        ex = _FakeExchange()
+        execu = _FakeExec()
+        mgr = TradeManager(ex, _gate_pass(), execu)
+        # seed an expired cooldown + simulate the prior position having
+        # already closed (no longer tracked, no longer on exchange)
+        mgr._recent_entries[("BTC/USDT:USDT", "long")] = (
+            time.time() - (SAME_DIRECTION_COOLDOWN_MIN * 60 + 1)
+        )
+        with patch("runner.manager.in_session", return_value=True), \
+             patch("runner.manager.in_pre_weekend_freeze", return_value=False):
+            retry = await mgr.process([_sig("BTC/USDT:USDT", direction="long")])
+        assert len(retry) == 1
+
+    asyncio.run(_run())
+
+
 def test_directional_verdict_halves_position_cap():
     async def _run():
         # 5 live positions is below the default cap (10) but at/over the halved
@@ -212,5 +266,8 @@ if __name__ == "__main__":
     test_multiple_signals_respect_intra_cycle_dedupe()
     test_long_only_blocks_shorts_and_halves_long_size()
     test_pre_weekend_freeze_blocks_new_entries()
+    test_same_direction_cooldown_skips_second_entry()
+    test_cooldown_is_per_direction_not_whole_symbol()
+    test_cooldown_expires_after_window()
     test_directional_verdict_halves_position_cap()
     print("all manager tests passed")

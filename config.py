@@ -163,6 +163,12 @@ POSITION_POLL_SEC = 15                  # live position monitor cadence
 LLM_GATE_INTERVAL_SEC = 600             # LLM re-evaluates every 10 min
 ORDER_TTL_SEC = 600                     # limit order expiry (matches LLM window)
 
+# After we place an entry on (symbol, direction), block re-entry on the
+# same (symbol, direction) for this many minutes. Stops the bot from
+# re-firing on the same persistent ICT setup. Opposite direction is
+# still allowed (valid reversal signals pass through).
+SAME_DIRECTION_COOLDOWN_MIN = 60
+
 # At start-up, cancel every open order and flatten every open position
 # so the bot never inherits unmanaged state from a previous (possibly
 # buggy) run. Set CLEAN_START=false if you want to keep existing state.

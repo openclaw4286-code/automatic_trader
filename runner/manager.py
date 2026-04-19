@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 from typing import Dict, List
 
-from config import MAX_CONCURRENT_POSITIONS
+from config import MAX_CONCURRENT_POSITIONS, SAME_DIRECTION_COOLDOWN_MIN
 from exchange.gateio import GateioFutures
 from ict.models import Signal
 from llm.gate import LLMGate
@@ -40,6 +40,9 @@ class TradeManager:
         self._exec = executor or Executor(ex)
         self._pos = position_manager or PositionManager(ex, self._exec)
         self._pending: Dict[str, Dict] = {}   # entry_order_id -> {symbol, placed_at}
+        # Per-direction cooldown: (symbol, direction) -> last_entry_epoch_sec.
+        # Blocks the bot from spamming the same persistent ICT setup.
+        self._recent_entries: Dict[tuple[str, str], float] = {}
 
     @property
     def position_manager(self) -> PositionManager:
@@ -84,6 +87,17 @@ class TradeManager:
         for sig in signals:
             if already_in_symbol(live, sig.symbol) or sig.symbol in tracked_syms:
                 continue
+            key = (sig.symbol, sig.direction)
+            last_ts = self._recent_entries.get(key)
+            if last_ts is not None:
+                elapsed = time.time() - last_ts
+                if elapsed < SAME_DIRECTION_COOLDOWN_MIN * 60:
+                    remaining = SAME_DIRECTION_COOLDOWN_MIN * 60 - elapsed
+                    log.info(
+                        "%s %s in cooldown (%.1f min left) — skipping",
+                        sig.symbol, sig.direction, remaining / 60,
+                    )
+                    continue
             if not self._gate.allow_direction(sig.direction):
                 log.info(
                     "LLM blocks direction=%s for %s (verdict=%s)",
@@ -115,6 +129,7 @@ class TradeManager:
                 "symbol": sig.symbol,
                 "placed_at": time.time(),
             }
+            self._recent_entries[key] = time.time()
             tracked_syms.add(sig.symbol)
             placed.append(receipt)
 
