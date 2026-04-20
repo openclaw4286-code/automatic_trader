@@ -191,6 +191,15 @@ NEWS_SOURCES = [
     "investing_economic",
 ]
 NEWS_LOOKBACK_MIN = 120                 # how far back to fetch news (minutes)
+# News-age buckets used by the LLM prompt. Markets are roughly
+# semi-strong-form efficient: older headlines have already moved into
+# the chart and should not, on their own, justify a directional /
+# WAIT verdict. The thresholds below were chosen for crypto (24/7
+# retail-driven absorption faster than equities — Tetlock 2007 style
+# sentiment decay).
+NEWS_BREAKING_MIN = 15      # ≤15m: not yet priced in — can solo-trigger
+NEWS_RECENT_MIN = 60        # 15-60m: partially absorbed — context only
+                            # >60m: stale — background regime only
 CRYPTOPANIC_TOKEN = os.getenv("CRYPTOPANIC_TOKEN", "")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
 

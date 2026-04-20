@@ -40,7 +40,10 @@ def test_prompt_has_required_sections_and_tokens():
         ]
     )
     assert "HIGH-IMPACT ECONOMIC EVENTS" in prompt
-    assert "HEADLINES" in prompt
+    # 3-tier age buckets present
+    assert "BREAKING HEADLINES" in prompt
+    assert "RECENT HEADLINES" in prompt
+    assert "STALE HEADLINES" in prompt
     # 4-state verdict prompt
     for tok in ("PASS", "LONG_ONLY", "SHORT_ONLY", "WAIT"):
         assert tok in prompt
@@ -53,6 +56,29 @@ def test_prompt_truncates_on_overflow():
     prompt = build_prompt(fat)
     assert len(prompt) <= 12_050
     assert "[truncated]" in prompt or len(prompt) < 12_000
+
+
+def test_prompt_buckets_news_by_age():
+    items = [
+        _item("breaking shock", minutes_ago=2),     # BREAKING
+        _item("partial absorb", minutes_ago=30),    # RECENT
+        _item("old story",      minutes_ago=120),   # STALE
+    ]
+    prompt = build_prompt(items)
+
+    def section(label: str) -> str:
+        # crude slice between this header and the next "[" or end
+        idx = prompt.index(label)
+        rest = prompt[idx:]
+        nxt = rest.find("\n[", 1)
+        return rest[: nxt if nxt != -1 else len(rest)]
+
+    assert "breaking shock" in section("[BREAKING")
+    assert "partial absorb" in section("[RECENT")
+    assert "old story" in section("[STALE")
+    # cross-contamination check
+    assert "breaking shock" not in section("[STALE")
+    assert "old story" not in section("[BREAKING")
 
 
 # -------------------------- verdict parsing -----------------------------
@@ -233,6 +259,7 @@ def test_cli_failure_defaults_to_wait():
 if __name__ == "__main__":
     test_prompt_has_required_sections_and_tokens()
     test_prompt_truncates_on_overflow()
+    test_prompt_buckets_news_by_age()
     test_parse_pass()
     test_parse_wait()
     test_parse_ambiguous_defaults_to_wait()
