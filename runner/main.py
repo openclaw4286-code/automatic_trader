@@ -24,6 +24,7 @@ from datetime import datetime
 
 from exchange.gateio import GateioFutures
 from exchange.universe import Universe
+from ict.autotune import tune_once, current_levels
 from llm.gate import LLMGate
 from runner.manager import TradeManager
 from runner.scanner import Scanner
@@ -96,6 +97,7 @@ async def gate_loop(gate: LLMGate) -> None:
 
 
 async def scan_loop(ex: GateioFutures, universe: Universe, scanner: Scanner, manager: TradeManager) -> None:
+    last_tune = datetime.now().astimezone()
     while True:
         try:
             if in_session():
@@ -105,6 +107,12 @@ async def scan_loop(ex: GateioFutures, universe: Universe, scanner: Scanner, man
                     await manager.process(signals)
             else:
                 log.debug("out of session — scan skipped")
+
+            # hourly autotune check (rate-limited internally to ≥55 min)
+            now = datetime.now().astimezone()
+            if (now - last_tune).total_seconds() >= 3600:
+                tune_once()
+                last_tune = now
         except Exception as exc:
             log.exception("scan_loop: %s", exc)
         await asyncio.sleep(SCAN_INTERVAL_SEC)
@@ -155,6 +163,11 @@ async def amain() -> None:
 
     if CLEAN_START:
         await flatten_startup_state(ex)
+
+    # Apply any persisted ladder positions from a previous run and possibly
+    # move one step based on signal volume in the last 24 h.
+    tune_once(force=True)
+    log.info("autotune levels on startup: %s", current_levels())
 
     universe = Universe(ex)
     await universe.refresh(force=True)

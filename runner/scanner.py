@@ -12,6 +12,7 @@ from typing import List, Optional
 
 from config import HTF_LOOKBACK, HTF_TIMEFRAME, LTF_LOOKBACK, LTF_TIMEFRAME, MTF_LOOKBACK, MTF_TIMEFRAME
 from exchange.gateio import GateioFutures
+from ict.autotune import record_signal
 from ict.models import Signal
 from ict.topdown import top_down
 from utils.logger import get_logger
@@ -44,6 +45,8 @@ class Scanner:
     async def scan(self, symbols: List[str]) -> List[Signal]:
         results = await asyncio.gather(*(self.scan_one(s) for s in symbols))
         signals = [s for s in results if s is not None]
+        for sig in signals:
+            record_signal(sig.symbol, sig.direction)
         if signals:
             log.info("scan produced %d signal(s) of %d scanned", len(signals), len(symbols))
         return signals

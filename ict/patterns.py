@@ -6,14 +6,12 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 
+import config as cfg
 from config import (
     ATR_PERIOD,
-    FVG_MIN_ATR_MULT,
     LIQUIDITY_TOLERANCE_PCT,
     OB_LOOKBACK,
     SWEEP_LOOKBACK,
-    SWEEP_WICK_RATIO,
-    VOL_MULT_SWEEP,
     VOL_SMA_BARS,
 )
 from ict.models import Swing, Sweep, Zone
@@ -42,7 +40,7 @@ def detect_fvgs(df: pd.DataFrame) -> List[Zone]:
     zones: List[Zone] = []
 
     for i in range(2, len(df)):
-        thresh = a[i] * FVG_MIN_ATR_MULT
+        thresh = a[i] * cfg.FVG_MIN_ATR_MULT
         # bullish FVG between candle i-2 (high) and candle i (low)
         if lows[i] > highs[i - 2] and lows[i] - highs[i - 2] >= thresh:
             top, bottom = float(lows[i]), float(highs[i - 2])
@@ -143,7 +141,7 @@ def detect_sweep(df: pd.DataFrame, lookback: int = SWEEP_LOOKBACK) -> Optional[S
     rng = max(last_high - last_low, 1e-12)
 
     vol_sma = float(df["volume"].iloc[max(0, i - VOL_SMA_BARS) : i].mean() or 0)
-    vol_ok = vol_sma > 0 and last_vol >= vol_sma * VOL_MULT_SWEEP
+    vol_ok = vol_sma > 0 and last_vol >= vol_sma * cfg.VOL_MULT_SWEEP
 
     prior_low = float(tail["low"].min())
     prior_high = float(tail["high"].max())
@@ -156,10 +154,10 @@ def detect_sweep(df: pd.DataFrame, lookback: int = SWEEP_LOOKBACK) -> Optional[S
     upper_wick = last_high - body_top
 
     if last_low < tol_low and last_close > prior_low:
-        if (lower_wick / rng) >= SWEEP_WICK_RATIO and vol_ok:
+        if (lower_wick / rng) >= cfg.SWEEP_WICK_RATIO and vol_ok:
             return Sweep(direction="long", idx=i, swept_level=prior_low)
     if last_high > tol_high and last_close < prior_high:
-        if (upper_wick / rng) >= SWEEP_WICK_RATIO and vol_ok:
+        if (upper_wick / rng) >= cfg.SWEEP_WICK_RATIO and vol_ok:
             return Sweep(direction="short", idx=i, swept_level=prior_high)
     return None
 

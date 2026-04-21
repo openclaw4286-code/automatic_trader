@@ -18,15 +18,12 @@ from typing import List, Optional
 
 import pandas as pd
 
+import config as cfg
 from config import (
     HTF_EMA_PERIOD,
     HTF_EMA_SLOPE_BARS,
-    HTF_MOMENTUM_FILTER,
     HTF_SWEEP_REQUIRED,
-    MIN_RR,
-    MTF_EVENT_LOOKBACK_BARS,
     SL_ATR_PAD,
-    VOL_MULT_TRIGGER,
 )
 from ict.models import Bias, Signal, TFAnalysis, Zone
 from ict.patterns import (
@@ -150,7 +147,7 @@ def top_down(
 
     # Momentum filter (Moskowitz et al. 2012): HTF EMA must be sloping
     # in the structural direction, otherwise the bias is being faded.
-    if HTF_MOMENTUM_FILTER and not _htf_momentum_ok(htf_df, direction):
+    if cfg.HTF_MOMENTUM_FILTER and not _htf_momentum_ok(htf_df, direction):
         return None
 
     htf_zones = _zones_in_direction(htf, direction)
@@ -166,7 +163,7 @@ def top_down(
     mtf = analyze(mtf_df, "MTF")
     if mtf.bias is not htf.bias:
         return None
-    mtf_event = _recent_event(mtf, direction, MTF_EVENT_LOOKBACK_BARS, len(mtf_df))
+    mtf_event = _recent_event(mtf, direction, cfg.MTF_EVENT_LOOKBACK_BARS, len(mtf_df))
     if mtf_event is None:
         return None
 
@@ -187,7 +184,7 @@ def top_down(
     # Volume confirmation on the trigger candle (Karpoff 1987). Use the LTF
     # sweep candle if a sweep is what triggered, otherwise the latest bar.
     trigger_idx = ltf.sweep.idx if ltf_sweep_aligned else len(ltf_df) - 1
-    if not volume_confirms(ltf_df, trigger_idx, VOL_MULT_TRIGGER):
+    if not volume_confirms(ltf_df, trigger_idx, cfg.VOL_MULT_TRIGGER):
         return None
 
     ltf_zone = _zone_containing(_zones_in_direction(ltf, direction), price)
@@ -218,7 +215,7 @@ def top_down(
             anchors.append(ltf_sweep_level)
         sl = min(anchors) - pad
         sl *= 0.999
-        tp = _next_liquidity_target(htf, "long", entry) or (entry + (entry - sl) * MIN_RR)
+        tp = _next_liquidity_target(htf, "long", entry) or (entry + (entry - sl) * cfg.MIN_RR)
     else:
         entry = ltf_zone.bottom
         anchors = [structural]
@@ -226,7 +223,7 @@ def top_down(
             anchors.append(ltf_sweep_level)
         sl = max(anchors) + pad
         sl *= 1.001
-        tp = _next_liquidity_target(htf, "short", entry) or (entry - (sl - entry) * MIN_RR)
+        tp = _next_liquidity_target(htf, "short", entry) or (entry - (sl - entry) * cfg.MIN_RR)
 
     htf_sweep_txt = (
         f"sweep@{htf.sweep.swept_level:.4f}" if htf_sweep_aligned else "no-sweep"
@@ -254,7 +251,7 @@ def top_down(
         ltf=ltf,
     )
 
-    if sig.rr < MIN_RR:
+    if sig.rr < cfg.MIN_RR:
         log.debug("%s rejected on RR=%.2f", symbol, sig.rr)
         return None
     return sig
