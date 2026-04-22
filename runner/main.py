@@ -24,7 +24,7 @@ from datetime import datetime
 
 from exchange.gateio import GateioFutures
 from exchange.universe import Universe
-from ict.autotune import tune_once, current_levels
+from ict.autotune import apply_state, tune_once, current_levels
 from llm.gate import LLMGate
 from runner.manager import TradeManager
 from runner.scanner import Scanner
@@ -164,9 +164,10 @@ async def amain() -> None:
     if CLEAN_START:
         await flatten_startup_state(ex)
 
-    # Apply any persisted ladder positions from a previous run and possibly
-    # move one step based on signal volume in the last 24 h.
-    tune_once(force=True)
+    # Apply persisted ladder positions — restarts must NOT trigger a
+    # tune step (that bug caused runaway tightening when the user
+    # restarted the bot a few times while count was above target).
+    apply_state()
     log.info("autotune levels on startup: %s", current_levels())
 
     universe = Universe(ex)

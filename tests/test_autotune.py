@@ -19,7 +19,7 @@ def test_default_levels_match_project_defaults(tmp_path, monkeypatch):
     import config
 
     _isolated_paths(tmp_path, monkeypatch)
-    state = autotune.tune_once(force=True)
+    autotune.apply_state()
     # middle-index levels must match the constants config.py ships with
     assert config.MIN_RR == autotune.LADDERS["MIN_RR"][autotune._DEFAULT_LEVEL["MIN_RR"]]
     assert config.VOL_MULT_TRIGGER == autotune.LADDERS["VOL_MULT_TRIGGER"][autotune._DEFAULT_LEVEL["VOL_MULT_TRIGGER"]]
@@ -29,7 +29,7 @@ def test_low_signal_count_loosens_ladders(tmp_path, monkeypatch):
     from ict import autotune
 
     _isolated_paths(tmp_path, monkeypatch)
-    autotune.tune_once(force=True)     # seed state at defaults
+    autotune.apply_state()             # seed state at defaults
     before = autotune._load_state().copy()
 
     # signal log exists but empty → count_24h = 0, prior tune was >1h ago
@@ -48,7 +48,7 @@ def test_high_signal_count_tightens_ladders(tmp_path, monkeypatch):
     from ict import autotune
 
     _isolated_paths(tmp_path, monkeypatch)
-    autotune.tune_once(force=True)
+    autotune.apply_state()
     before = autotune._load_state().copy()
 
     # 20 signals in last hour, older tune
@@ -70,7 +70,7 @@ def test_in_target_band_no_change(tmp_path, monkeypatch):
     from ict import autotune
 
     _isolated_paths(tmp_path, monkeypatch)
-    autotune.tune_once(force=True)
+    autotune.apply_state()
     before = autotune._load_state().copy()
 
     # 5 signals in last 24h → in target band [3, 10]

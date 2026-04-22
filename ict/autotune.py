@@ -120,32 +120,55 @@ def _apply(state: Dict[str, Any]) -> None:
     log.info("autotune applied: %s", values)
 
 
-def tune_once(force: bool = False) -> Dict[str, Any]:
-    """Evaluate today's signal rate and possibly move all ladders one
-    step. Returns the applied state."""
+def apply_state() -> Dict[str, Any]:
+    """Load persisted ladder indices and apply them to `config` without
+    attempting any movement. Idempotent — safe to call on every startup
+    (crucially, restarting the bot no longer inadvertently tightens).
+    Also persists so fresh installs get a state file seeded with defaults.
+    """
+    state = _load_state()
+    for name, idx in _DEFAULT_LEVEL.items():
+        state.setdefault(name, idx)
+    _apply(state)
+    _save_state(state)
+    return state
+
+
+def tune_once() -> Dict[str, Any]:
+    """Rate-limited step move based on last 24 h signal count.
+
+    Moves every ladder by ±1 when the count falls outside [TARGET_LOW,
+    TARGET_HIGH]. No-op while we are still within TUNE_MIN_INTERVAL_SEC
+    of the last successful move — this is what prevents process
+    restarts from compounding tune steps. Always re-applies the active
+    state so the ict modules pick it up without needing a restart."""
     state = _load_state()
     for name, idx in _DEFAULT_LEVEL.items():
         state.setdefault(name, idx)
 
     now = time.time()
     last = state.get("last_tuned_at", 0.0)
+    cooldown = (now - last) < TUNE_MIN_INTERVAL_SEC
+
     count_24h = signals_in_last(86400) if SIGNAL_LOG.exists() else None
     state["last_count_24h"] = count_24h if count_24h is not None else -1
 
-    moved = False
-    if count_24h is not None and (force or (now - last) >= TUNE_MIN_INTERVAL_SEC):
+    if count_24h is None:
+        log.info("autotune: no signal history yet — applying defaults without adjustment")
+    elif cooldown:
+        remain = TUNE_MIN_INTERVAL_SEC - (now - last)
+        log.debug("autotune: in cooldown (%.1f min left)", remain / 60)
+    else:
         direction = None
         if count_24h < TARGET_LOW_PER_DAY:
-            direction = -1        # loosen
+            direction = -1
         elif count_24h > TARGET_HIGH_PER_DAY:
-            direction = +1        # tighten
+            direction = +1
 
         if direction is not None:
             for name, ladder in LADDERS.items():
                 new_idx = max(0, min(len(ladder) - 1, state[name] + direction))
-                if new_idx != state[name]:
-                    state[name] = new_idx
-                    moved = True
+                state[name] = new_idx
             state["last_tuned_at"] = now
             log.info(
                 "autotune %s (count_24h=%d, target=%d..%d)",
@@ -154,14 +177,9 @@ def tune_once(force: bool = False) -> Dict[str, Any]:
             )
         else:
             log.debug("autotune: count_24h=%d in target band — no change", count_24h)
-    elif count_24h is None:
-        log.info("autotune: no signal history yet — applying defaults without adjustment")
 
     _apply(state)
-    if moved:
-        _save_state(state)
-    else:
-        _save_state(state)  # still persist count_24h
+    _save_state(state)
     return state
 
 
@@ -171,3 +189,16 @@ def current_levels() -> Dict[str, Any]:
     for name, idx in _DEFAULT_LEVEL.items():
         state.setdefault(name, idx)
     return {name: LADDERS[name][state[name]] for name in LADDERS}
+
+
+def reset_to_defaults() -> Dict[str, Any]:
+    """Wipe the ladder state back to project defaults. Useful after a
+    misbehaving run has tightened everything to the maximum. Resets the
+    cooldown so the next hourly tick is free to move again."""
+    state = dict(_DEFAULT_LEVEL)
+    state["last_tuned_at"] = 0.0
+    state["last_count_24h"] = -1
+    _save_state(state)
+    _apply(state)
+    log.info("autotune reset to defaults: %s", current_levels())
+    return state
