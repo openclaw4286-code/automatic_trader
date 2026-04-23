@@ -63,7 +63,7 @@ _DEFAULT_LEVEL: Dict[str, int] = {
 }
 
 # Signal-rate targets (per calendar day across the universe).
-TARGET_LOW_PER_DAY = 3
+TARGET_LOW_PER_DAY = 5
 TARGET_HIGH_PER_DAY = 10
 TUNE_MIN_INTERVAL_SEC = 55 * 60   # do not tune more than once per ~hour
 
