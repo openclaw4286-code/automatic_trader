@@ -152,13 +152,13 @@ def top_down(
         return None
 
     htf_zones = _zones_in_direction(htf, direction)
-    if not htf_zones:
-        return None
-
+    # HTF zone is optional context now — we still look for one containing
+    # price to nest MTF zones inside, but its absence does not kill the
+    # signal. The structural AND-chain of zone-containment turned out to
+    # be the dominant rejector even after every numerical filter was
+    # pegged at its loosest end.
     price = float(ltf_df["close"].iloc[-1])
     htf_zone = _zone_containing(htf_zones, price)
-    if htf_zone is None:
-        return None
 
     # -------- MTF -----------------------------------------------------------
     mtf = analyze(mtf_df, "MTF")
@@ -168,11 +168,13 @@ def top_down(
     if mtf_event is None:
         return None
 
+    # MTF zone is also optional — if one exists and contains price, we
+    # prefer it for the SL anchor; otherwise _structural_sl falls back to
+    # the nearest MTF swing.
     mtf_zones_dir = _zones_in_direction(mtf, direction)
-    mtf_zones_nested = _zones_inside(mtf_zones_dir, htf_zone) or mtf_zones_dir
-    mtf_zone = _zone_containing(mtf_zones_nested, price)
-    if mtf_zone is None:
-        return None
+    if htf_zone is not None:
+        mtf_zones_dir = _zones_inside(mtf_zones_dir, htf_zone) or mtf_zones_dir
+    mtf_zone = _zone_containing(mtf_zones_dir, price)
 
     # -------- LTF -----------------------------------------------------------
     ltf = analyze(ltf_df, "LTF")
@@ -188,9 +190,10 @@ def top_down(
     if not volume_confirms(ltf_df, trigger_idx, cfg.VOL_MULT_TRIGGER):
         return None
 
+    # LTF zone is optional — if one exists and contains price, we use its
+    # edge as entry for precision; otherwise we take the current mark as
+    # entry (structural SL still anchors risk).
     ltf_zone = _zone_containing(_zones_in_direction(ltf, direction), price)
-    if ltf_zone is None:
-        return None
 
     # -------- Entry / SL / TP ---------------------------------------------
     # Entry precision = LTF zone edge.
@@ -210,7 +213,7 @@ def top_down(
     pad = atr_mtf * SL_ATR_PAD
 
     if direction == "long":
-        entry = ltf_zone.top
+        entry = ltf_zone.top if ltf_zone is not None else price
         anchors = [structural]
         if ltf_sweep_level is not None and ltf_sweep_level < structural:
             anchors.append(ltf_sweep_level)
@@ -222,7 +225,7 @@ def top_down(
         # reachable take-profit even when the next HTF liquidity pool is distant
         tp = min(tp_raw, entry + risk_unit * MAX_RR_TP)
     else:
-        entry = ltf_zone.bottom
+        entry = ltf_zone.bottom if ltf_zone is not None else price
         anchors = [structural]
         if ltf_sweep_level is not None and ltf_sweep_level > structural:
             anchors.append(ltf_sweep_level)
@@ -240,10 +243,13 @@ def top_down(
         if ltf_sweep_aligned
         else (ltf_event or "-")
     )
+    htf_zone_txt = htf_zone.kind if htf_zone is not None else "no-zone"
+    mtf_zone_txt = mtf_zone.kind if mtf_zone is not None else "swing-fallback"
+    ltf_zone_txt = ltf_zone.kind if ltf_zone is not None else "mark-price"
     reason = (
-        f"HTF {htf.bias.value} {htf_sweep_txt} inside {htf_zone.kind} | "
-        f"MTF {mtf_event} inside {mtf_zone.kind} (SL anchor) | "
-        f"LTF {ltf_trigger_txt} → {ltf_zone.kind}"
+        f"HTF {htf.bias.value} {htf_sweep_txt} in {htf_zone_txt} | "
+        f"MTF {mtf_event} in {mtf_zone_txt} (SL anchor) | "
+        f"LTF {ltf_trigger_txt} → {ltf_zone_txt}"
     )
 
     sig = Signal(
