@@ -54,6 +54,7 @@ class _Order:
     stop_price: Optional[float] = None
     reduce_only: bool = False
     is_market: bool = False
+    close_position: bool = False   # close=True → close the whole position on trigger
     status: str = "open"
 
     def as_ccxt(self) -> Dict[str, Any]:
@@ -65,6 +66,7 @@ class _Order:
             "price": self.price,
             "stopPrice": self.stop_price,
             "reduceOnly": self.reduce_only,
+            "close": self.close_position,
             "status": self.status,
         }
 
@@ -132,6 +134,7 @@ class DryBroker:
             stop_price=float(stop_price) if stop_price is not None else None,
             reduce_only=True,
             is_market=is_market,
+            close_position=bool(p.get("close")),
         )
         self._orders[oid] = order
         kind = "SL" if order.stop_price is not None else "TP"
@@ -208,7 +211,12 @@ class DryBroker:
             return 1.0
 
     def _fill_at(self, order: _Order, pos: _Position, price: float, *, kind: str) -> None:
-        close_qty = min(order.amount, pos.contracts)
+        # close=True (Gate auto_size) → close whatever the position is,
+        # regardless of the order's stored amount.
+        if order.close_position:
+            close_qty = pos.contracts
+        else:
+            close_qty = min(order.amount, pos.contracts)
         cs = self._contract_size(pos.symbol)
         base_qty = close_qty * cs
         pnl_per_unit = (price - pos.entry_price) if pos.side == "long" else (pos.entry_price - price)

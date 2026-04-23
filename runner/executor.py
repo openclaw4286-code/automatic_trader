@@ -95,9 +95,13 @@ class Executor:
         return EntryReceipt(order_id=str(order.get("id")), symbol=plan.symbol, plan=plan)
 
     async def attach_stop_loss(self, symbol: str, direction: str, qty_contracts: float, sl: float) -> str:
-        """Reduce-only stop-market. ccxt gate expects only stopPrice +
-        reduceOnly; passing 'trigger' / 'type' strings confuses Gate's
-        unmarshaller (error: 'cannot unmarshal string into ... PriceTrigger')."""
+        """Position-attached SL via Gate's ``close=True`` (auto_size).
+
+        The order closes WHATEVER the position size is at the moment the
+        trigger fires — so partial TPs that reduce the position
+        automatically shrink the SL coverage too. ``qty_contracts`` is
+        still passed for exchanges that require an amount, but Gate
+        ignores it for close-trigger orders."""
         side = self._close_side(direction)
         price = self._round_price(symbol, sl)
         qty = self._round_qty(symbol, qty_contracts)
@@ -109,13 +113,16 @@ class Executor:
             params={
                 "reduceOnly": True,
                 "stopPrice": price,
+                "close": True,
             },
         )
         oid = str(order.get("id"))
-        log.info("SL attached %s @ %.6g id=%s", symbol, price, oid)
+        log.info("SL attached %s @ %.6g id=%s (close=True)", symbol, price, oid)
         return oid
 
     async def attach_take_profit(self, symbol: str, direction: str, qty_contracts: float, tp: float) -> str:
+        """Position-attached TP — reduce-only limit that closes the
+        entire remaining position when price reaches ``tp``."""
         side = self._close_side(direction)
         price = self._round_price(symbol, tp)
         qty = self._round_qty(symbol, qty_contracts)
@@ -124,10 +131,13 @@ class Executor:
             side=side,
             amount=qty,
             price=price,
-            params={"reduceOnly": True},
+            params={
+                "reduceOnly": True,
+                "close": True,
+            },
         )
         oid = str(order.get("id"))
-        log.info("TP attached %s @ %.6g id=%s", symbol, price, oid)
+        log.info("TP attached %s @ %.6g id=%s (close=True)", symbol, price, oid)
         return oid
 
     async def replace_stop_loss(
