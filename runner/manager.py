@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 from typing import Dict, List
 
-from config import MAX_CONCURRENT_POSITIONS, SAME_DIRECTION_COOLDOWN_MIN
+from config import MAX_CONCURRENT_POSITIONS, MAX_PORTFOLIO_RISK_PCT, SAME_DIRECTION_COOLDOWN_MIN
 from exchange.gateio import GateioFutures
 from ict.models import Signal
 from llm.gate import LLMGate
@@ -119,6 +119,22 @@ class TradeManager:
             plan = plan_position(sig, equity, market, risk_scale=scale, margin_scale=scale)
             if plan is None:
                 continue
+
+            # Portfolio-risk cap — reject if adding this plan would push the
+            # total planned loss (sum of expected_loss_usdt across every
+            # tracked position not yet closed) beyond MAX_PORTFOLIO_RISK_PCT
+            # of equity. Keeps worst-case compound drawdown bounded.
+            open_risk = sum(
+                t.initial_loss_usdt for t in self._pos.tracked() if not t.closed
+            )
+            limit = equity * MAX_PORTFOLIO_RISK_PCT
+            if open_risk + plan.expected_loss_usdt > limit:
+                log.info(
+                    "%s skipped — portfolio risk cap (open=%.2f + this=%.2f > %.2f)",
+                    sig.symbol, open_risk, plan.expected_loss_usdt, limit,
+                )
+                continue
+
             try:
                 receipt = await self._exec.place_entry(plan)
             except Exception as exc:

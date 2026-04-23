@@ -57,6 +57,7 @@ class TrackedPosition:
     qty_original: float       # contracts
     qty_remaining: float
     entry_order_id: str
+    initial_loss_usdt: float = 0.0   # expected USDT loss if initial SL hits — used for portfolio-risk cap
     sl_order_id: Optional[str] = None
     tp_order_id: Optional[str] = None
     opened: bool = False
@@ -87,6 +88,7 @@ class PositionManager:
             qty_original=plan.qty_contracts,
             qty_remaining=plan.qty_contracts,
             entry_order_id=receipt.order_id,
+            initial_loss_usdt=plan.expected_loss_usdt,
         )
         self._tracked[plan.symbol] = t
         return t

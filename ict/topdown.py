@@ -23,6 +23,7 @@ from config import (
     HTF_EMA_PERIOD,
     HTF_EMA_SLOPE_BARS,
     HTF_SWEEP_REQUIRED,
+    MAX_RR_TP,
     SL_ATR_PAD,
 )
 from ict.models import Bias, Signal, TFAnalysis, Zone
@@ -215,7 +216,11 @@ def top_down(
             anchors.append(ltf_sweep_level)
         sl = min(anchors) - pad
         sl *= 0.999
-        tp = _next_liquidity_target(htf, "long", entry) or (entry + (entry - sl) * cfg.MIN_RR)
+        risk_unit = entry - sl
+        tp_raw = _next_liquidity_target(htf, "long", entry) or (entry + risk_unit * cfg.MIN_RR)
+        # clamp an extremely-far HTF target to MAX_RR_TP so the runner has a
+        # reachable take-profit even when the next HTF liquidity pool is distant
+        tp = min(tp_raw, entry + risk_unit * MAX_RR_TP)
     else:
         entry = ltf_zone.bottom
         anchors = [structural]
@@ -223,7 +228,9 @@ def top_down(
             anchors.append(ltf_sweep_level)
         sl = max(anchors) + pad
         sl *= 1.001
-        tp = _next_liquidity_target(htf, "short", entry) or (entry - (sl - entry) * cfg.MIN_RR)
+        risk_unit = sl - entry
+        tp_raw = _next_liquidity_target(htf, "short", entry) or (entry - risk_unit * cfg.MIN_RR)
+        tp = max(tp_raw, entry - risk_unit * MAX_RR_TP)
 
     htf_sweep_txt = (
         f"sweep@{htf.sweep.swept_level:.4f}" if htf_sweep_aligned else "no-sweep"

@@ -130,9 +130,21 @@ LEVERAGE_MAX = 50
 MAX_MARGIN = 0.10                # 10% of equity — final margin cap
 MAX_CONCURRENT_POSITIONS = 10
 MIN_RR = 1.5                     # minimum reward-to-risk (TP vs SL)
+# Runner / HTF-target TP is clamped at this many R so a far-away liquidity
+# pool does not leave us holding an un-reachable take-profit. With TP1 at
+# 1R (40 % closed) and TP2 at 2R (30 %), the remaining 30 % runner
+# therefore targets max 3R from the entry.
+MAX_RR_TP = 3.0
 MIN_SL_PCT = 0.004               # reject setups whose SL is tighter than this
                                  # (0.4%) — fees dominate the risk budget on
                                  # ultra-tight stops
+
+# Portfolio-level cap — sum of planned dollar-loss across every
+# currently tracked open position may not exceed this fraction of equity.
+# At 2.5 %/trade this limits us to ~2 simultaneous positions before new
+# entries are refused, which keeps worst-case daily drawdown bounded even
+# when multiple SLs hit at once.
+MAX_PORTFOLIO_RISK_PCT = 0.05
 
 
 # ---------------------------------------------------------------------------
