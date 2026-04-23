@@ -131,15 +131,6 @@ async def monitor_loop(ex: GateioFutures, manager: TradeManager) -> None:
                 log.warning("weekend boundary crossed — flattening all state")
                 await flatten_startup_state(ex)
             last_tick = now
-
-            positions = await ex.positions()
-            equity = await ex.equity_usdt()
-            log.info(
-                "equity=%.2f USDT  live=%d  tracked=%d",
-                equity,
-                len(positions),
-                len(manager.position_manager.tracked()),
-            )
         except Exception as exc:
             log.exception("monitor_loop: %s", exc)
         await asyncio.sleep(POSITION_POLL_SEC)

@@ -5,15 +5,26 @@ Pipeline per cycle (only when we are in-session):
           → per-symbol sizing  → executor.place_entry(plan)
           → position_manager.register(receipt, plan)
 
-Protection (SL + TP), partial TP, trailing, and emergency close are
-owned by PositionManager and run on the monitor loop tick.
+Immediately after a successful entry the manager spawns a verification
+task that waits ENTRY_VERIFY_DELAY_SEC, then checks that both SL and
+TP are alive on the exchange — if either is missing, the position is
+market-closed right away. This is the primary defence against the
+24-hour orphan-position scenario that led to a full liquidation.
+
+Partial TP, trailing, and ongoing protection guarding are owned by
+PositionManager and run on the monitor loop tick.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Dict, List
 
-from config import MAX_CONCURRENT_POSITIONS, MAX_PORTFOLIO_RISK_PCT, SAME_DIRECTION_COOLDOWN_MIN
+from config import (
+    ENTRY_VERIFY_DELAY_SEC,
+    MAX_CONCURRENT_POSITIONS,
+    SAME_DIRECTION_COOLDOWN_MIN,
+)
 from exchange.gateio import GateioFutures
 from ict.models import Signal
 from llm.gate import LLMGate
@@ -119,22 +130,6 @@ class TradeManager:
             plan = plan_position(sig, equity, market, risk_scale=scale, margin_scale=scale)
             if plan is None:
                 continue
-
-            # Portfolio-risk cap — reject if adding this plan would push the
-            # total planned loss (sum of expected_loss_usdt across every
-            # tracked position not yet closed) beyond MAX_PORTFOLIO_RISK_PCT
-            # of equity. Keeps worst-case compound drawdown bounded.
-            open_risk = sum(
-                t.initial_loss_usdt for t in self._pos.tracked() if not t.closed
-            )
-            limit = equity * MAX_PORTFOLIO_RISK_PCT
-            if open_risk + plan.expected_loss_usdt > limit:
-                log.info(
-                    "%s skipped — portfolio risk cap (open=%.2f + this=%.2f > %.2f)",
-                    sig.symbol, open_risk, plan.expected_loss_usdt, limit,
-                )
-                continue
-
             try:
                 receipt = await self._exec.place_entry(plan)
             except Exception as exc:
@@ -148,8 +143,40 @@ class TradeManager:
             self._recent_entries[key] = time.time()
             tracked_syms.add(sig.symbol)
             placed.append(receipt)
+            # Fire-and-forget verification: if SL or TP did not land on
+            # the exchange, close the position at market right away.
+            asyncio.create_task(self._verify_protection(plan))
 
         return placed
+
+    async def _verify_protection(self, plan) -> None:
+        """Wait briefly then confirm that SL and TP orders exist on the
+        exchange for `plan.symbol`. If either is missing AND the
+        position is live, emergency-close immediately."""
+        try:
+            await asyncio.sleep(ENTRY_VERIFY_DELAY_SEC)
+            live = await self._ex.positions()
+            pos = next((p for p in live if p.get("symbol") == plan.symbol), None)
+            if pos is None or float(pos.get("contracts") or 0) <= 0:
+                return  # entry not filled yet — nothing to guard
+            opens = await self._ex.open_orders(plan.symbol)
+            has_sl = any(o.get("stopPrice") for o in opens)
+            has_tp = any(
+                o.get("reduceOnly") and not o.get("stopPrice") and o.get("price")
+                for o in opens
+            )
+            if has_sl and has_tp:
+                return
+            qty = float(pos.get("contracts") or 0)
+            log.error(
+                "post-entry verify FAILED %s (sl=%s tp=%s) — emergency close qty=%.6g",
+                plan.symbol, has_sl, has_tp, qty,
+            )
+            await self._exec.emergency_close(plan.symbol, plan.direction, qty)
+            # drop tracking so the monitor does not keep re-attaching
+            self._pos._tracked.pop(plan.symbol, None)   # type: ignore[attr-defined]
+        except Exception as exc:
+            log.exception("post-entry verify crashed for %s: %s", plan.symbol, exc)
 
     async def cleanup_stale(self) -> None:
         # Entries whose position opened are no longer pending — drop them

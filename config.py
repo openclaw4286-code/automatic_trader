@@ -139,13 +139,6 @@ MIN_SL_PCT = 0.004               # reject setups whose SL is tighter than this
                                  # (0.4%) — fees dominate the risk budget on
                                  # ultra-tight stops
 
-# Portfolio-level cap — sum of planned dollar-loss across every
-# currently tracked open position may not exceed this fraction of equity.
-# At 2.5 %/trade this limits us to ~2 simultaneous positions before new
-# entries are refused, which keeps worst-case daily drawdown bounded even
-# when multiple SLs hit at once.
-MAX_PORTFOLIO_RISK_PCT = 0.05
-
 
 # ---------------------------------------------------------------------------
 # Exit management (multi-tier TP, BE, trailing stop)
@@ -164,14 +157,23 @@ TRAIL_DISTANCE_R = 0.8           # trailing SL sits this many R behind the high
 
 # Protection guard — if SL or TP cannot be attached to a live position
 # after this many tick retries, we emergency-close at market.
-PROTECTION_MAX_RETRY = 2
+# Default 1 means ONE failed attach = immediate emergency close. Previous
+# default 2 was too permissive and allowed ~30 s of unguarded exposure.
+PROTECTION_MAX_RETRY = 1
+
+# Entry-time atomic-protection verification: after place_entry, wait
+# this many seconds and then verify BOTH SL and TP are alive on the
+# exchange. If either is missing, close the position at market. This
+# catches the failure mode where ccxt accepted the entry but silently
+# rejected one of the nested stopLoss/takeProfit triggers.
+ENTRY_VERIFY_DELAY_SEC = 3
 
 
 # ---------------------------------------------------------------------------
 # Execution cadence
 # ---------------------------------------------------------------------------
 SCAN_INTERVAL_SEC = 60                  # ICT scan cadence
-POSITION_POLL_SEC = 15                  # live position monitor cadence
+POSITION_POLL_SEC = 5                   # live position monitor cadence
 LLM_GATE_INTERVAL_SEC = 600             # LLM re-evaluates every 10 min
 ORDER_TTL_SEC = 600                     # limit order expiry (matches LLM window)
 

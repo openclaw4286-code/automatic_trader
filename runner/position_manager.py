@@ -57,7 +57,6 @@ class TrackedPosition:
     qty_original: float       # contracts
     qty_remaining: float
     entry_order_id: str
-    initial_loss_usdt: float = 0.0   # expected USDT loss if initial SL hits — used for portfolio-risk cap
     sl_order_id: Optional[str] = None
     tp_order_id: Optional[str] = None
     opened: bool = False
@@ -88,7 +87,6 @@ class PositionManager:
             qty_original=plan.qty_contracts,
             qty_remaining=plan.qty_contracts,
             entry_order_id=receipt.order_id,
-            initial_loss_usdt=plan.expected_loss_usdt,
         )
         self._tracked[plan.symbol] = t
         return t
@@ -101,8 +99,6 @@ class PositionManager:
 
     # ----------------------------------------------------------------- tick
     async def tick(self) -> None:
-        if not self._tracked:
-            return
         try:
             live_list = await self._ex.positions()
         except Exception as exc:
@@ -110,6 +106,7 @@ class PositionManager:
             return
         live_by_sym: Dict[str, Dict[str, Any]] = {p["symbol"]: p for p in live_list}
 
+        # 1) handle tracked positions
         for sym in list(self._tracked):
             t = self._tracked[sym]
             if t.closed:
@@ -117,6 +114,32 @@ class PositionManager:
                 continue
             live = live_by_sym.get(sym)
             await self._tick_one(t, live)
+
+        # 2) ORPHAN DETECTION — a live position we are not tracking means
+        #    this process did not place it (e.g. a previous crashed run).
+        #    An orphan without SL = the very bug that caused a 24 h-hold
+        #    liquidation. Close it immediately.
+        for sym, pos in live_by_sym.items():
+            if sym in self._tracked:
+                continue
+            qty = float(pos.get("contracts") or 0)
+            if qty <= 0:
+                continue
+            try:
+                opens = await self._ex.open_orders(sym)
+            except Exception as exc:
+                log.warning("orphan %s: open_orders failed — closing anyway: %s", sym, exc)
+                opens = []
+            has_sl = any(o.get("stopPrice") for o in opens)
+            if has_sl:
+                continue   # some SL exists — leave it alone (user may have placed manually)
+            side = (pos.get("side") or "").lower()
+            direction = "long" if side in ("long", "buy") else "short"
+            log.error("ORPHAN position %s qty=%.6g with NO SL — emergency closing", sym, qty)
+            try:
+                await self._exec.emergency_close(sym, direction, qty)
+            except Exception as exc:
+                log.exception("orphan close FAILED %s: %s", sym, exc)
 
     async def _tick_one(self, t: TrackedPosition, live: Optional[Dict[str, Any]]) -> None:
         if live is None:

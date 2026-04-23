@@ -44,22 +44,27 @@ class Executor:
         return m
 
     def _round_price(self, symbol: str, price: float) -> float:
+        """Round DOWN to the market's price tick. Uniformly treats the
+        precision value as a TICK SIZE regardless of whether it is less
+        than, equal to, or greater than 1 — ccxt 4.x returns tick size
+        in the `precision` fields for Gate futures, so the previous
+        `round(price, int(step))` branch was silently wrong for symbols
+        whose step is an integer."""
         m = self._market(symbol)
         step = (m.get("precision") or {}).get("price")
-        if step is None or step <= 0:
+        if step is None or step <= 0 or price <= 0:
             return price
-        if step < 1:
-            return math.floor(price / step) * step if price > 0 else price
-        return round(price, int(step))
+        return math.floor(price / step) * step
 
     def _round_qty(self, symbol: str, qty: float) -> float:
+        """Same tick-size treatment for amounts. For an alt whose
+        amount step is 1 (integer contracts), this now correctly floors
+        11.3 → 11 instead of the previous (buggy) 11.3."""
         m = self._market(symbol)
         step = (m.get("precision") or {}).get("amount")
         if step is None or step <= 0:
             return qty
-        if step < 1:
-            return math.floor(qty / step) * step
-        return math.floor(qty * 10 ** step) / 10 ** step
+        return math.floor(qty / step) * step
 
     @staticmethod
     def _close_side(direction: str) -> str:
@@ -67,17 +72,26 @@ class Executor:
 
     # ---------- operations ----------
     async def place_entry(self, plan: PositionPlan) -> EntryReceipt:
+        """Place the limit entry AND ask ccxt to attach SL+TP atomically
+        via the stopLossPrice / takeProfitPrice params. This minimises the
+        exchange-side gap where a position is live without protection."""
         await self._ex.set_leverage(plan.symbol, plan.leverage)
         price = self._round_price(plan.symbol, plan.entry)
+        sl_px = self._round_price(plan.symbol, plan.sl)
+        tp_px = self._round_price(plan.symbol, plan.tp)
         qty = self._round_qty(plan.symbol, plan.qty_contracts)
         order = await self._ex.create_order(
             symbol=plan.symbol,
             side=plan.side,
             amount=qty,
             price=price,
-            params={"timeInForce": "GTC"},
+            params={
+                "timeInForce": "GTC",
+                "stopLossPrice": sl_px,
+                "takeProfitPrice": tp_px,
+            },
         )
-        log.info("entry placed: %s", plan.as_log())
+        log.info("entry placed (with atomic SL=%g TP=%g): %s", sl_px, tp_px, plan.as_log())
         return EntryReceipt(order_id=str(order.get("id")), symbol=plan.symbol, plan=plan)
 
     async def attach_stop_loss(self, symbol: str, direction: str, qty_contracts: float, sl: float) -> str:

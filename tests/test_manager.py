@@ -241,31 +241,6 @@ def test_cooldown_expires_after_window():
     asyncio.run(_run())
 
 
-def test_portfolio_risk_cap_blocks_third_entry():
-    """After two 2.5% trades are tracked, a third entry must be refused
-    because total planned risk would exceed MAX_PORTFOLIO_RISK_PCT (5%)."""
-    async def _run():
-        ex = _FakeExchange()
-        execu = _FakeExec()
-        mgr = TradeManager(ex, _gate_pass(), execu)
-        from runner.position_manager import TrackedPosition
-        # two positions already consuming the full 5% cap (2 × 250 = 500 = 5% of 10_000)
-        for sym in ("AAA/USDT:USDT", "BBB/USDT:USDT"):
-            mgr._pos._tracked[sym] = TrackedPosition(
-                symbol=sym, direction="long",
-                entry=100.0, initial_sl=99.0, current_sl=99.0, tp=103.0,
-                qty_original=250.0, qty_remaining=250.0,
-                entry_order_id=f"e-{sym}", opened=True,
-                initial_loss_usdt=250.0,
-            )
-        with patch("runner.manager.in_session", return_value=True), \
-             patch("runner.manager.in_pre_weekend_freeze", return_value=False):
-            placed = await mgr.process([_sig("CCC/USDT:USDT", direction="long")])
-        assert placed == []
-
-    asyncio.run(_run())
-
-
 def test_directional_verdict_halves_position_cap():
     async def _run():
         # 5 live positions is below the default cap (10) but at/over the halved
@@ -294,6 +269,5 @@ if __name__ == "__main__":
     test_same_direction_cooldown_skips_second_entry()
     test_cooldown_is_per_direction_not_whole_symbol()
     test_cooldown_expires_after_window()
-    test_portfolio_risk_cap_blocks_third_entry()
     test_directional_verdict_halves_position_cap()
     print("all manager tests passed")
