@@ -2,20 +2,25 @@
 
 Called every monitor tick. Responsibilities:
 
- 1. Detect when a limit entry actually fills and attach SL + TP
-    immediately. If attachment fails PROTECTION_MAX_RETRY times,
-    EMERGENCY-CLOSE the position at market.
- 2. On every tick, verify the SL and TP order ids are still alive on
-    the exchange. If one has vanished (canceled / rejected / partial),
-    re-attach it; if re-attach also fails, emergency close.
- 3. Partial take profit: when price reaches TP1 (1R by default), close
-    TP1_PORTION (50%) at market and — if BREAKEVEN_AFTER_TP1 — cancel
-    the initial SL and repost it at the entry price for the remainder.
- 4. Trailing stop: once price has moved at least TRAIL_ACTIVATION_RR in
-    favor, maintain a new SL at (best_price ± TRAIL_DISTANCE_R × R).
-    Only moves the SL tighter, never looser.
- 5. When the live position disappears (hit TP, SL, or external close),
-    drop tracking.
+ 1. Detect when a limit entry actually fills, then ensure an SL AND a
+    TP order exist on the exchange. If either is still missing after
+    one attempt, emergency-close the position at market (we never sit
+    on an unguarded position).
+ 2. Every tick: re-query open_orders and confirm by PRESENCE (not by
+    stored order id) that SL and TP are still alive. If either
+    vanished (externally canceled / filled partial / rejected), try
+    one attach; if that also fails to land, emergency close.
+ 3. Orphan detection: any live position the exchange reports that we
+    are not tracking is checked the same way — missing SL ⇒ close.
+ 4. Partial take profit: price reaches TP1 (1R) → close TP1_PORTION
+    (40%) at market; with BREAKEVEN_AFTER_TP1, move SL to entry.
+    Price reaches TP2 (2R) → close another TP2_PORTION (30%); runner
+    is the remainder.
+ 5. Trailing stop: once price has moved at least TRAIL_ACTIVATION_RR
+    in favor, maintain a new SL at best_price ± TRAIL_DISTANCE_R × R.
+    Moves tighter only, never looser.
+ 6. When a live position disappears (TP, SL, or external close), drop
+    tracking.
 """
 from __future__ import annotations
 
@@ -24,7 +29,6 @@ from typing import Any, Dict, List, Optional
 
 from config import (
     BREAKEVEN_AFTER_TP1,
-    PROTECTION_MAX_RETRY,
     TP1_PORTION,
     TP2_PORTION,
     TRAIL_ENABLED,
@@ -64,7 +68,6 @@ class TrackedPosition:
     tp2_done: bool = False
     breakeven_moved: bool = False
     best_price: Optional[float] = None
-    attach_retries: int = 0
     closed: bool = False
     reason_closed: str = ""
 
@@ -217,10 +220,11 @@ class PositionManager:
                 await self._emergency_close(t, "post-attach verify failed")
                 return False
 
-        t.attach_retries = 0
         return True
 
     async def _attach(self, t: TrackedPosition, *, kind: str) -> bool:
+        """One-shot attach. Exception → emergency close; we never sit on
+        a live position trying to re-attach."""
         try:
             if kind == "sl":
                 t.sl_order_id = await self._exec.attach_stop_loss(
@@ -232,17 +236,8 @@ class PositionManager:
                 )
             return True
         except Exception as exc:
-            t.attach_retries += 1
-            log.error(
-                "%s attach failed for %s (%d/%d): %s",
-                kind.upper(),
-                t.symbol,
-                t.attach_retries,
-                PROTECTION_MAX_RETRY,
-                exc,
-            )
-            if t.attach_retries >= PROTECTION_MAX_RETRY:
-                await self._emergency_close(t, f"{kind} attach exhausted")
+            log.error("%s attach raised for %s — emergency close: %s", kind.upper(), t.symbol, exc)
+            await self._emergency_close(t, f"{kind} attach raised")
             return False
 
     async def _emergency_close(self, t: TrackedPosition, reason: str) -> None:

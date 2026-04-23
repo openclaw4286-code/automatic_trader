@@ -155,17 +155,9 @@ TRAIL_ENABLED = True
 TRAIL_ACTIVATION_RR = 1.5        # trail activates after price is this far in R
 TRAIL_DISTANCE_R = 0.8           # trailing SL sits this many R behind the high
 
-# Protection guard — if SL or TP cannot be attached to a live position
-# after this many tick retries, we emergency-close at market.
-# Default 1 means ONE failed attach = immediate emergency close. Previous
-# default 2 was too permissive and allowed ~30 s of unguarded exposure.
-PROTECTION_MAX_RETRY = 1
-
-# Entry-time atomic-protection verification: after place_entry, wait
-# this many seconds and then verify BOTH SL and TP are alive on the
-# exchange. If either is missing, close the position at market. This
-# catches the failure mode where ccxt accepted the entry but silently
-# rejected one of the nested stopLoss/takeProfit triggers.
+# Entry-time protection verification: after place_entry, wait this
+# many seconds, then verify BOTH SL and TP are alive on the exchange.
+# If either is missing the position is closed at market immediately.
 ENTRY_VERIFY_DELAY_SEC = 3
 
 
@@ -215,7 +207,6 @@ NEWS_BREAKING_MIN = 15      # ≤15m: not yet priced in — can solo-trigger
 NEWS_RECENT_MIN = 60        # 15-60m: partially absorbed — context only
                             # >60m: stale — background regime only
 CRYPTOPANIC_TOKEN = os.getenv("CRYPTOPANIC_TOKEN", "")
-NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
 
 
 # ---------------------------------------------------------------------------

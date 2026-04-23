@@ -121,7 +121,6 @@ if [ "$write_env" = "1" ]; then
   prompt_secret  GATE_API_KEY    "Gate.io API key"
   prompt_secret  GATE_API_SECRET "Gate.io API secret"
   prompt_optional CRYPTOPANIC_TOKEN "CryptoPanic token"
-  prompt_optional NEWSAPI_KEY       "NewsAPI key"
   prompt_optional CLAUDE_CLI        "claude CLI binary" "claude"
   prompt_yn      DRY_RUN_BOOL    "start in DRY_RUN mode (simulated orders, recommended)" "Y"
   prompt_optional LOG_LEVEL         "log level (DEBUG/INFO/WARNING)" "INFO"
@@ -132,7 +131,6 @@ if [ "$write_env" = "1" ]; then
 GATE_API_KEY=$GATE_API_KEY
 GATE_API_SECRET=$GATE_API_SECRET
 CRYPTOPANIC_TOKEN=$CRYPTOPANIC_TOKEN
-NEWSAPI_KEY=$NEWSAPI_KEY
 CLAUDE_CLI=$CLAUDE_CLI
 DRY_RUN=$DRY_RUN_BOOL
 LOG_LEVEL=$LOG_LEVEL
