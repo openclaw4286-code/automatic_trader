@@ -173,22 +173,50 @@ class PositionManager:
 
     # ----------------------------------------------------------- protection
     async def _ensure_protected(self, t: TrackedPosition) -> bool:
+        """Verify BY PRESENCE (not by id): an SL must exist as a stopPrice
+        order, a TP as a reduce-only limit. Attempt one attach for each
+        missing piece, then RE-VERIFY. If anything is still missing after
+        the re-verify, emergency-close immediately — we never assume the
+        attach that just 'returned ok' really landed."""
         try:
             opens = await self._ex.open_orders(t.symbol)
         except Exception as exc:
             log.warning("open_orders(%s) failed: %s", t.symbol, exc)
             return False
 
-        open_ids = {str(o.get("id")) for o in opens}
-        sl_alive = bool(t.sl_order_id and t.sl_order_id in open_ids)
-        tp_alive = bool(t.tp_order_id and t.tp_order_id in open_ids)
+        has_sl = any(o.get("stopPrice") for o in opens)
+        has_tp = any(
+            o.get("reduceOnly") and not o.get("stopPrice") and o.get("price")
+            for o in opens
+        )
 
-        if not sl_alive:
+        if not has_sl:
             if not await self._attach(t, kind="sl"):
                 return False
-        if not tp_alive:
+        if not has_tp:
             if not await self._attach(t, kind="tp"):
                 return False
+
+        if not has_sl or not has_tp:
+            # we tried to attach — re-query and confirm it actually landed.
+            try:
+                opens2 = await self._ex.open_orders(t.symbol)
+            except Exception as exc:
+                log.warning("re-verify open_orders(%s) failed: %s", t.symbol, exc)
+                return False
+            has_sl2 = any(o.get("stopPrice") for o in opens2)
+            has_tp2 = any(
+                o.get("reduceOnly") and not o.get("stopPrice") and o.get("price")
+                for o in opens2
+            )
+            if not (has_sl2 and has_tp2):
+                log.error(
+                    "post-attach verify FAILED %s (sl=%s tp=%s) — emergency close",
+                    t.symbol, has_sl2, has_tp2,
+                )
+                await self._emergency_close(t, "post-attach verify failed")
+                return False
+
         t.attach_retries = 0
         return True
 

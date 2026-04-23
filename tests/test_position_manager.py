@@ -28,13 +28,18 @@ class _FakeExchange:
         return []
 
     async def open_orders(self, symbol: Optional[str] = None):
-        if self.open_orders_queue:
+        # pop while more than one entry remains; stay on the last so
+        # repeated calls inside a single tick (e.g. re-verify) see the
+        # same exchange state.
+        if len(self.open_orders_queue) > 1:
             return self.open_orders_queue.pop(0)
+        if self.open_orders_queue:
+            return self.open_orders_queue[0]
         return []
 
 
 class _FakeExecutor:
-    def __init__(self, attach_side_effect: Optional[List[Any]] = None) -> None:
+    def __init__(self, attach_side_effect: Optional[List[Any]] = None, ex=None) -> None:
         self.attach_sl_calls: List[float] = []
         self.attach_tp_calls: List[float] = []
         self.partial_close_calls: List[float] = []
@@ -43,6 +48,7 @@ class _FakeExecutor:
         self._attach_side = list(attach_side_effect or [])
         self._sl_counter = 0
         self._tp_counter = 0
+        self._ex = ex     # optional — if provided, push synthetic orders into exchange state
 
     def _pop_side(self):
         if self._attach_side:
@@ -52,17 +58,26 @@ class _FakeExecutor:
             return v
         return None
 
+    def _push_order(self, symbol, order):
+        if self._ex is None or not self._ex.open_orders_queue:
+            return
+        self._ex.open_orders_queue[-1].append(order)
+
     async def attach_stop_loss(self, symbol, direction, qty, sl):
         self.attach_sl_calls.append(sl)
         self._pop_side()
         self._sl_counter += 1
-        return f"sl-{self._sl_counter}"
+        oid = f"sl-{self._sl_counter}"
+        self._push_order(symbol, {"id": oid, "symbol": symbol, "stopPrice": sl})
+        return oid
 
     async def attach_take_profit(self, symbol, direction, qty, tp):
         self.attach_tp_calls.append(tp)
         self._pop_side()
         self._tp_counter += 1
-        return f"tp-{self._tp_counter}"
+        oid = f"tp-{self._tp_counter}"
+        self._push_order(symbol, {"id": oid, "symbol": symbol, "reduceOnly": True, "price": tp})
+        return oid
 
     async def replace_stop_loss(self, symbol, direction, qty, old_id, new_sl):
         self.replace_sl_calls.append(new_sl)
@@ -108,7 +123,7 @@ def _live(symbol="BTC/USDT:USDT", contracts=1000.0, mark=100.0) -> Dict[str, Any
 def test_entry_fill_attaches_sl_and_tp_once():
     async def _run():
         ex = _FakeExchange()
-        fe = _FakeExecutor()
+        fe = _FakeExecutor(ex=ex)
         mgr = PositionManager(ex, fe)                         # type: ignore[arg-type]
         plan = _plan()
         mgr.register(_receipt(plan), plan)
@@ -118,9 +133,14 @@ def test_entry_fill_attaches_sl_and_tp_once():
         await mgr.tick()
         assert fe.attach_sl_calls == [] and fe.attach_tp_calls == []
 
-        # tick 2: position appears, protection attached
+        # tick 2: position appears. _ensure_protected polls open_orders
+        # TWICE per tick now (initial + post-attach re-verify). Stage both.
         ex.positions_queue = [[_live()]]
-        ex.open_orders_queue = [[]]                           # nothing attached yet
+        ex.open_orders_queue = [
+            [],                                                          # initial: nothing
+            [{"id": "sl-1", "stopPrice": 99},                            # re-verify: both landed
+             {"id": "tp-1", "reduceOnly": True, "price": 103}],
+        ]
         await mgr.tick()
         assert fe.attach_sl_calls == [99.0]
         assert fe.attach_tp_calls == [103.0]
@@ -131,19 +151,27 @@ def test_entry_fill_attaches_sl_and_tp_once():
 def test_missing_sl_is_reattached_on_next_tick():
     async def _run():
         ex = _FakeExchange()
-        fe = _FakeExecutor()
+        fe = _FakeExecutor(ex=ex)
         mgr = PositionManager(ex, fe)                         # type: ignore[arg-type]
         plan = _plan()
         mgr.register(_receipt(plan), plan)
 
         ex.positions_queue = [[_live()]]
-        ex.open_orders_queue = [[]]                           # first attach
+        ex.open_orders_queue = [
+            [],                                                          # tick1 initial
+            [{"id": "sl-1", "stopPrice": 99},                            # tick1 re-verify
+             {"id": "tp-1", "reduceOnly": True, "price": 103}],
+        ]
         await mgr.tick()
         assert fe.attach_sl_calls == [99.0]
 
-        # next tick: SL id vanished (exchange rejected / filled partial)
+        # next tick: SL vanished (externally canceled), TP still there
         ex.positions_queue = [[_live()]]
-        ex.open_orders_queue = [[{"id": "tp-1"}]]             # only TP survives
+        ex.open_orders_queue = [
+            [{"id": "tp-1", "reduceOnly": True, "price": 103}],          # tick2 initial (no SL)
+            [{"id": "sl-2", "stopPrice": 99},                            # tick2 re-verify: re-attached
+             {"id": "tp-1", "reduceOnly": True, "price": 103}],
+        ]
         await mgr.tick()
         assert len(fe.attach_sl_calls) == 2                   # re-attached
 
@@ -173,7 +201,7 @@ def test_attach_failures_trigger_emergency_close():
 def test_partial_tp_triggers_and_moves_sl_to_breakeven():
     async def _run():
         ex = _FakeExchange()
-        fe = _FakeExecutor()
+        fe = _FakeExecutor(ex=ex)
         mgr = PositionManager(ex, fe)                         # type: ignore[arg-type]
         plan = _plan(entry=100.0, sl=99.0, tp=103.0)          # 1R = 1.0 -> TP1 = 101
         mgr.register(_receipt(plan), plan)
@@ -198,7 +226,7 @@ def test_tp2_partial_after_tp1():
     """After TP1 fires at 1R, TP2 fires at 2R for the next portion."""
     async def _run():
         ex = _FakeExchange()
-        fe = _FakeExecutor()
+        fe = _FakeExecutor(ex=ex)
         mgr = PositionManager(ex, fe)                         # type: ignore[arg-type]
         plan = _plan(entry=100.0, sl=99.0, tp=110.0)          # R=1
         mgr.register(_receipt(plan), plan)
@@ -226,7 +254,7 @@ def test_tp2_partial_after_tp1():
 def test_trailing_stop_tightens_when_price_runs():
     async def _run():
         ex = _FakeExchange()
-        fe = _FakeExecutor()
+        fe = _FakeExecutor(ex=ex)
         mgr = PositionManager(ex, fe)                         # type: ignore[arg-type]
         plan = _plan(entry=100.0, sl=99.0, tp=110.0)          # R = 1.0
         mgr.register(_receipt(plan), plan)
@@ -256,7 +284,7 @@ def test_trailing_stop_tightens_when_price_runs():
 def test_position_vanishing_drops_tracking():
     async def _run():
         ex = _FakeExchange()
-        fe = _FakeExecutor()
+        fe = _FakeExecutor(ex=ex)
         mgr = PositionManager(ex, fe)                         # type: ignore[arg-type]
         plan = _plan()
         mgr.register(_receipt(plan), plan)
