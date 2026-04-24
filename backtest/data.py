@@ -67,13 +67,15 @@ async def fetch_history(
     minutes_per_bar = _TF_MINUTES[timeframe]
     total_bars_needed = int((days * 24 * 60) / minutes_per_bar) + 5
     chunk = 1000
-    rows: List[List[float]] = []
+    step_ms = chunk * minutes_per_bar * 60_000
+    collected: Dict[int, List[float]] = {}    # ts -> row (dedupe-by-ts)
     until_ms = int(time.time() * 1000)
+    max_iters = 60                            # hard cap so we never loop forever
 
-    while len(rows) < total_bars_needed:
-        # Gate paginates backward via `since` not `until`; ccxt accepts since.
-        # We therefore compute since = until - chunk*minutes_per_bar*60_000.
-        since = until_ms - chunk * minutes_per_bar * 60_000
+    for _ in range(max_iters):
+        if len(collected) >= total_bars_needed:
+            break
+        since = until_ms - step_ms
         try:
             batch = await ex._ex.fetch_ohlcv(
                 symbol, timeframe=timeframe, since=since, limit=chunk
@@ -83,24 +85,35 @@ async def fetch_history(
             break
         if not batch:
             break
-        rows = batch + rows
-        oldest_ts = batch[0][0]
-        if oldest_ts <= since:
-            until_ms = oldest_ts - 60_000
-        else:
-            until_ms = oldest_ts - 60_000
-        if len(batch) < chunk:
+        # Only keep rows strictly older than our current cursor — otherwise
+        # we'd re-collect the same newest-batch every iteration. Gate / ccxt
+        # happily return a short batch (e.g. 997) on a full 1000-limit call,
+        # so deciding "done" on batch size alone (the old bug) stopped us
+        # after a single page. Instead we stop when a whole page yields zero
+        # NEW rows, which is what "no more history" actually looks like.
+        new = 0
+        for row in batch:
+            ts = int(row[0])
+            if ts < until_ms and ts not in collected:
+                collected[ts] = row
+                new += 1
+        if new == 0:
             break
+        until_ms = min(collected)
         await asyncio.sleep(0.25)   # be nice to the API
 
-    if not rows:
+    if not collected:
         return pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume"])
 
+    rows = [collected[ts] for ts in sorted(collected)]
     df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
-    df = df.drop_duplicates(subset="ts").sort_values("ts").reset_index(drop=True)
     df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
     df.to_csv(cache, index=False)
-    log.info("cached %d %s %s bars → %s", len(df), symbol, timeframe, cache.name)
+    span_days = (df["ts"].iloc[-1] - df["ts"].iloc[0]).total_seconds() / 86400
+    log.info(
+        "cached %d %s %s bars (%.1f days) → %s",
+        len(df), symbol, timeframe, span_days, cache.name,
+    )
     return df
 
 
