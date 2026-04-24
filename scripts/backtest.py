@@ -31,7 +31,7 @@ from typing import Dict, List
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config as cfg
-from backtest.data import prefetch_universe, _cache_path
+from backtest.data import _read_cache, _cache_path, prefetch_universe
 from backtest.engine import BacktestResult, run_backtest
 from backtest.grid import (
     LARGE_GRID,
@@ -91,7 +91,7 @@ def _load_cache(symbols: List[str], days: int) -> Dict[str, Dict[str, "object"]]
             p = _cache_path(ccxt_sym, tf, days)
             if not p.exists():
                 continue
-            cache[ccxt_sym][tf] = pd.read_parquet(p)
+            cache[ccxt_sym][tf] = _read_cache(p)
     return cache
 
 
